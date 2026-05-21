@@ -65,8 +65,17 @@ Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let th
 
 | Secret | Example |
 |--------|---------|
-| `ARVIL_SYNC_URL` | `https://your-app.vercel.app/api/sync` |
-| `POLL_CRON_SECRET` | Same as Vercel |
+| `ARVIL_SYNC_URL` | `https://your-app.vercel.app/api/sync` (no trailing slash) |
+| `POLL_CRON_SECRET` | **Exact same string** as on Vercel |
+
+**GITHUB_TOKEN (Vercel):** Fine-grained PAT → Repository access → `ROCm/TheRock` (or all public) → Permissions → **Actions: Read-only**. Classic PAT: `public_repo` or `repo` scope.
+
+### Sync troubleshooting
+
+1. Open `https://YOUR-APP.vercel.app/api/sync?diag=1` — should show `github_token_set: true` and `database_set: true`.
+2. In the app, click **Sync now** — errors now show in the UI (401 = secret mismatch; 503 = missing `GITHUB_TOKEN`).
+3. GitHub → **Actions** → **Poll TheRock CI** → **Run workflow** — check log for HTTP code and JSON body.
+4. Hobby Vercel limits functions to **10s**; sync processes at most 2 runs × 1 job per request.
 
 ## Python CLI
 

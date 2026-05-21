@@ -16,13 +16,26 @@ jobs:
           ARVIL_SYNC_URL: ${{ secrets.ARVIL_SYNC_URL }}
           POLL_CRON_SECRET: ${{ secrets.POLL_CRON_SECRET }}
         run: |
-          if [ -z "$ARVIL_SYNC_URL" ]; then
-            echo "Set repository secret ARVIL_SYNC_URL (e.g. https://your-app.vercel.app/api/sync)"
+          set -euo pipefail
+          if [ -z "${ARVIL_SYNC_URL:-}" ]; then
+            echo "::error::Set repository secret ARVIL_SYNC_URL (e.g. https://YOUR-APP.vercel.app/api/sync)"
             exit 1
           fi
-          curl -sf -X POST "$ARVIL_SYNC_URL" \
-            -H "Authorization: Bearer ${POLL_CRON_SECRET}" \
+          if [ -z "${POLL_CRON_SECRET:-}" ]; then
+            echo "::warning::POLL_CRON_SECRET is empty — sync only works if Vercel also has no POLL_CRON_SECRET"
+          fi
+          AUTH_HEADER=()
+          if [ -n "${POLL_CRON_SECRET:-}" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer ${POLL_CRON_SECRET}")
+          fi
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o sync-result.json -X POST "${ARVIL_SYNC_URL}" \
+            "${AUTH_HEADER[@]}" \
             -H "Content-Type: application/json" \
-            -d '{"maxRuns":5}' \
-            | tee sync-result.json
+            -d '{"maxRuns":2}')
+          echo "HTTP ${HTTP_CODE}"
+          cat sync-result.json
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::ARVIL sync returned HTTP ${HTTP_CODE}"
+            exit 1
+          fi
           echo "Sync completed"

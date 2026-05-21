@@ -15,8 +15,8 @@ import type { WorkflowPreset } from "./types";
 
 const GITHUB_API = "https://api.github.com";
 const LOG_PREVIEW_MAX = 32_000;
-const MAX_NEW_RUNS_PER_SYNC = 5;
-const MAX_JOBS_PER_RUN = 3;
+const MAX_NEW_RUNS_PER_SYNC = 2;
+const MAX_JOBS_PER_RUN = 1;
 
 export interface SyncResult {
   ok: boolean;
@@ -56,7 +56,8 @@ function repoParts(repo: string) {
 async function ghFetch(
   path: string,
   token: string,
-  accept = "application/vnd.github+json"
+  accept = "application/vnd.github+json",
+  redirect: RequestRedirect = "follow"
 ): Promise<Response> {
   return fetch(`${GITHUB_API}${path}`, {
     headers: {
@@ -64,7 +65,17 @@ async function ghFetch(
       Accept: accept,
       "X-GitHub-Api-Version": "2022-11-28",
     },
+    redirect,
   });
+}
+
+async function ghErrorDetail(res: Response): Promise<string> {
+  try {
+    const j = (await res.json()) as { message?: string; documentation_url?: string };
+    return j.message ? `${j.message}` : "";
+  } catch {
+    return "";
+  }
 }
 
 function hashContent(text: string): string {
@@ -90,12 +101,31 @@ async function downloadJobLogText(
   const res = await ghFetch(
     `/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`,
     token,
-    "application/vnd.github+json"
+    "application/vnd.github+json",
+    "manual"
   );
-  if (!res.ok) {
-    throw new Error(`Job logs ${jobId}: HTTP ${res.status}`);
+
+  let logRes: Response;
+  if (res.status === 302 || res.status === 301) {
+    const location = res.headers.get("location");
+    if (!location) {
+      throw new Error(`Job logs ${jobId}: redirect without Location`);
+    }
+    logRes = await fetch(location);
+  } else if (res.ok) {
+    logRes = res;
+  } else {
+    const detail = await ghErrorDetail(res);
+    throw new Error(
+      `Job logs ${jobId}: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`
+    );
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+
+  if (!logRes.ok) {
+    throw new Error(`Job logs ${jobId} download: HTTP ${logRes.status}`);
+  }
+
+  const buf = Buffer.from(await logRes.arrayBuffer());
   // GitHub returns a zip archive
   try {
     const JSZip = (await import("jszip")).default;
@@ -141,7 +171,10 @@ export async function pollTheRock(options?: {
     token
   );
   if (!runsRes.ok) {
-    result.errors.push(`List runs failed: HTTP ${runsRes.status}`);
+    const detail = await ghErrorDetail(runsRes);
+    result.errors.push(
+      `List runs failed: HTTP ${runsRes.status}${detail ? ` — ${detail}` : ""} (check GITHUB_TOKEN: Actions read for ${githubRepo})`
+    );
     return result;
   }
 

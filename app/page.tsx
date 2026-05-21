@@ -43,14 +43,21 @@ export default function Home() {
     setSyncMsg(null);
     setError(null);
     try {
-      const res = await fetch("/api/sync", { method: "POST" });
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxRuns: 2 }),
+      });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Sync failed");
+      if (!res.ok) {
+        const parts = [data.error, data.hint, ...(data.errors ?? [])].filter(Boolean);
+        throw new Error(parts.join(" — ") || "Sync failed");
+      }
       setSyncMsg(
         `Synced ${data.runs_ingested ?? 0} runs, ${data.artifacts_created ?? 0} logs, ${data.analyses_created ?? 0} analyses`
       );
       if (data.errors?.length) {
-        setSyncMsg((m) => `${m} (${data.errors.length} warnings)`);
+        setSyncMsg((m) => `${m}. ${data.errors.slice(0, 3).join("; ")}`);
       }
       loadHistory();
     } catch (err) {

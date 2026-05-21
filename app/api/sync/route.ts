@@ -5,23 +5,72 @@ export const maxDuration = 60;
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Bearer/query secret for GitHub Actions; same-origin allowed for "Sync now" in the UI. */
 function authorize(req: NextRequest): boolean {
   const secret = process.env.POLL_CRON_SECRET;
   if (!secret) return true;
   const auth = req.headers.get("authorization");
   if (auth === `Bearer ${secret}`) return true;
   const q = req.nextUrl.searchParams.get("secret");
-  return q === secret;
+  if (q === secret) return true;
+  const site = req.headers.get("sec-fetch-site");
+  if (site === "same-origin") return true;
+  return false;
 }
 
-export async function POST(req: NextRequest) {
-  if (!authorize(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("diag") === "1") {
+    return NextResponse.json({
+      github_token_set: Boolean(process.env.GITHUB_TOKEN),
+      database_set: Boolean(process.env.DATABASE_URL),
+      poll_secret_set: Boolean(process.env.POLL_CRON_SECRET),
+      github_repo: process.env.GITHUB_REPO || "ROCm/TheRock",
+      hint: !process.env.GITHUB_TOKEN
+        ? "Add GITHUB_TOKEN in Vercel (fine-grained PAT: Actions read on public repos, or classic repo scope)."
+        : undefined,
+    });
   }
+  if (!authorize(req)) {
+    return NextResponse.json(
+      {
+        error: "Unauthorized",
+        hint: "GitHub Actions: set ARVIL_SYNC_URL + POLL_CRON_SECRET. Browser: open the app and use Sync now (same origin).",
+      },
+      { status: 401 }
+    );
+  }
+  return runSync(req);
+}
+
+async function runSync(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const maxRuns = typeof body.maxRuns === "number" ? body.maxRuns : 5;
+    if (!process.env.GITHUB_TOKEN) {
+      return NextResponse.json(
+        {
+          ok: false,
+          runs_checked: 0,
+          runs_ingested: 0,
+          artifacts_created: 0,
+          analyses_created: 0,
+          errors: ["GITHUB_TOKEN is not set"],
+          error: "GITHUB_TOKEN is not set on the server",
+          hint: "Vercel → Settings → Environment Variables → GITHUB_TOKEN (PAT with Actions read).",
+        },
+        { status: 503 }
+      );
+    }
+    const body =
+      req.method === "GET"
+        ? {}
+        : await req.json().catch(() => ({}));
+    const maxRuns =
+      typeof body.maxRuns === "number"
+        ? Math.min(Math.max(1, body.maxRuns), 3)
+        : 2;
     const result = await pollTheRock({ maxRuns });
+    if (!result.ok && result.runs_ingested === 0) {
+      return NextResponse.json(result, { status: 502 });
+    }
     return NextResponse.json(result);
   } catch (e) {
     console.error(e);
@@ -32,9 +81,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
-export async function GET(req: NextRequest) {
+export async function POST(req: NextRequest) {
   if (!authorize(req)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      {
+        error: "Unauthorized",
+        hint: "Match POLL_CRON_SECRET on Vercel and in GitHub repo secrets for scheduled sync.",
+      },
+      { status: 401 }
+    );
   }
-  return POST(req);
+  return runSync(req);
 }
