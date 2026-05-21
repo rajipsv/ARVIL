@@ -1,4 +1,4 @@
-import { pollTheRock } from "@/lib/github-poll";
+import { normalizeGithubRepo, pollTheRock } from "@/lib/github-poll";
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 60;
@@ -24,7 +24,10 @@ export async function GET(req: NextRequest) {
       github_token_set: Boolean(process.env.GITHUB_TOKEN),
       database_set: Boolean(process.env.DATABASE_URL),
       poll_secret_set: Boolean(process.env.POLL_CRON_SECRET),
-      github_repo: process.env.GITHUB_REPO || "ROCm/TheRock",
+      github_repo: normalizeGithubRepo(
+        process.env.GITHUB_REPO || "ROCm/TheRock"
+      ),
+      github_repo_raw: process.env.GITHUB_REPO || null,
       hint: !process.env.GITHUB_TOKEN
         ? "Add GITHUB_TOKEN in Vercel (fine-grained PAT: Actions read on public repos, or classic repo scope)."
         : undefined,

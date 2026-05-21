@@ -48,8 +48,25 @@ interface GhJob {
   completed_at?: string;
 }
 
+/** Accept `ROCm/TheRock` or `https://github.com/ROCm/TheRock` (common misconfiguration). */
+export function normalizeGithubRepo(repo: string): string {
+  let s = repo.trim();
+  s = s.replace(/^https?:\/\/github\.com\//i, "");
+  s = s.replace(/\.git$/i, "");
+  s = s.replace(/\/+$/, "");
+  const parts = s.split("/").filter(Boolean);
+  if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+  return s;
+}
+
 function repoParts(repo: string) {
-  const [owner, name] = repo.split("/");
+  const normalized = normalizeGithubRepo(repo);
+  const [owner, name] = normalized.split("/");
+  if (!owner || !name) {
+    throw new Error(
+      `Invalid GITHUB_REPO "${repo}" — use owner/repo (e.g. ROCm/TheRock), not a full URL`
+    );
+  }
   return { owner, name };
 }
 
@@ -147,7 +164,9 @@ export async function pollTheRock(options?: {
   maxRuns?: number;
 }): Promise<SyncResult> {
   const token = process.env.GITHUB_TOKEN;
-  const githubRepo = process.env.GITHUB_REPO || "ROCm/TheRock";
+  const githubRepo = normalizeGithubRepo(
+    process.env.GITHUB_REPO || "ROCm/TheRock"
+  );
   const result: SyncResult = {
     ok: false,
     runs_checked: 0,
@@ -172,8 +191,14 @@ export async function pollTheRock(options?: {
   );
   if (!runsRes.ok) {
     const detail = await ghErrorDetail(runsRes);
+    const apiPath = `/repos/${owner}/${name}/actions/runs`;
+    const envHint =
+      process.env.GITHUB_REPO &&
+      process.env.GITHUB_REPO.trim() !== githubRepo
+        ? ` GITHUB_REPO env was "${process.env.GITHUB_REPO}" — use owner/repo only (e.g. ROCm/TheRock).`
+        : "";
     result.errors.push(
-      `List runs failed: HTTP ${runsRes.status}${detail ? ` — ${detail}` : ""} (check GITHUB_TOKEN: Actions read for ${githubRepo})`
+      `List runs failed: HTTP ${runsRes.status}${detail ? ` — ${detail}` : ""} (GET ${apiPath}; token needs Actions read on ${githubRepo}).${envHint}`
     );
     return result;
   }
