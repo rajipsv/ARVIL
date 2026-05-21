@@ -1,0 +1,21 @@
+2024-12-10 10:15:23 INFO [Application] Starting application...
+2024-12-10 10:15:24 INFO [Database] Connecting to database: postgres://localhost:5432/mydb
+2024-12-10 10:15:25 ERROR [Database] Connection failed: Connection timeout after 30s
+2024-12-10 10:15:25 INFO [Application] Retrying database connection...
+2024-12-10 10:15:30 INFO [Database] Connected successfully
+2024-12-10 10:16:45 WARNING [API] Rate limit approaching: 95% of quota used
+2024-12-10 10:17:12 INFO [UserService] User login: user_id=12345
+2024-12-10 10:18:33 ERROR [PaymentService] Payment processing failed: InvalidCardException
+    at PaymentProcessor.process(PaymentProcessor.java:123)
+    at OrderService.checkout(OrderService.java:456)
+    Caused by: stripe.error.CardError: Your card was declined
+2024-12-10 10:19:01 CRITICAL [Security] Unauthorized access attempt detected from IP: 192.168.1.100
+2024-12-10 10:19:02 INFO [Security] IP blocked: 192.168.1.100
+2024-12-10 10:20:15 WARNING [Cache] Redis connection unstable, switching to fallback
+2024-12-10 10:21:30 ERROR [FileSystem] Failed to write file: /data/reports/daily.pdf - Disk quota exceeded
+2024-12-10 10:22:00 FATAL [Application] Out of memory error - shutting down
+    java.lang.OutOfMemoryError: Java heap space
+    at java.util.Arrays.copyOf(Arrays.java:3332)
+    at java.lang.AbstractStringBuilder.ensureCapacityInternal(AbstractStringBuilder.java:124)
+2024-12-10 10:22:01 INFO [Application] Shutdown complete
+

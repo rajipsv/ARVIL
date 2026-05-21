@@ -1,0 +1,1 @@
+{"id": "res_1", "error_signature": "ROCm install failed dependency", "resolution": "Clean apt cache and reinstall rocm meta-package from staging repo", "category": "Other", "severity": "MEDIUM"}

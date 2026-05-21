@@ -1,0 +1,122 @@
+[
+  {
+    "id": "db_connection_timeout",
+    "pattern": "Database connection timeout",
+    "category": "Database",
+    "severity": "HIGH",
+    "signatures": ["connection timeout", "connection failed", "database", "postgres", "mysql"],
+    "causes": "Network issues, firewall, DB down, pool exhausted",
+    "solutions": "Check connectivity, firewall, restart DB, increase pool size",
+    "similar_errors": "Connection refused, Connection reset"
+  },
+  {
+    "id": "oom_heap",
+    "pattern": "Out of memory / Java heap space",
+    "category": "Memory",
+    "severity": "CRITICAL",
+    "signatures": ["out of memory", "heap space", "oom", "memory allocation failed"],
+    "causes": "Memory leak, insufficient heap, large in-memory processing",
+    "solutions": "Increase heap, fix leaks, paginate data, add memory monitoring",
+    "similar_errors": "OutOfMemoryError, MemoryError"
+  },
+  {
+    "id": "disk_quota",
+    "pattern": "Disk quota exceeded",
+    "category": "FileSystem",
+    "severity": "CRITICAL",
+    "signatures": ["disk quota", "no space left", "disk full", "storage quota"],
+    "causes": "Full disk, large logs, no rotation policy",
+    "solutions": "Free space, log rotation, archive data, increase quota",
+    "similar_errors": "ENOSPC, write failed"
+  },
+  {
+    "id": "auth_failure",
+    "pattern": "Authentication / unauthorized access",
+    "category": "Security",
+    "severity": "HIGH",
+    "signatures": ["unauthorized", "authentication failed", "invalid token", "401", "permission denied"],
+    "causes": "Bad credentials, expired token, wrong permissions",
+    "solutions": "Verify credentials, refresh tokens, fix RBAC",
+    "similar_errors": "403 forbidden, access denied"
+  },
+  {
+    "id": "rate_limit",
+    "pattern": "API rate limit approaching or exceeded",
+    "category": "API",
+    "severity": "MEDIUM",
+    "signatures": ["rate limit", "quota", "429", "too many requests"],
+    "causes": "Traffic spike, missing backoff, low API tier",
+    "solutions": "Throttle clients, exponential backoff, cache, upgrade plan",
+    "similar_errors": "Quota exceeded"
+  },
+  {
+    "id": "payment_card_declined",
+    "pattern": "Payment / card processing failure",
+    "category": "Runtime",
+    "severity": "HIGH",
+    "signatures": ["payment", "card declined", "invalidcard", "stripe"],
+    "causes": "Invalid card, fraud rules, gateway outage",
+    "solutions": "Validate payment method, check gateway status, retry with idempotency",
+    "similar_errors": "Transaction failed"
+  },
+  {
+    "id": "rocm_hip_error",
+    "pattern": "ROCm HIP API failure",
+    "category": "GPU/Driver",
+    "severity": "HIGH",
+    "signatures": ["hiperror", "hip error", "hip api", "invalid device", "rocblas", "hipfft"],
+    "causes": "Driver mismatch, wrong GPU visible, ROCm version skew, missing device",
+    "solutions": "Verify rocm-smi, matching driver/stack, GPU passthrough, reinstall ROCm packages",
+    "similar_errors": "HIP initialization failed"
+  },
+  {
+    "id": "rocm_hsa_status",
+    "pattern": "HSA runtime / ROCr failure",
+    "category": "GPU/Driver",
+    "severity": "CRITICAL",
+    "signatures": ["hsa_status", "hsa error", "rocr", "agent exited", "kernel exception"],
+    "causes": "Firmware, KFD issues, incompatible kernel, GPU reset required",
+    "solutions": "Check dmesg, reboot GPU, validate kernel+ROCm matrix, escalate to driver team",
+    "similar_errors": "HSA_STATUS_ERROR"
+  },
+  {
+    "id": "rocm_install_fail",
+    "pattern": "ROCm package install / dependency failure",
+    "category": "Configuration",
+    "severity": "HIGH",
+    "signatures": ["dpkg", "rpm", "apt install", "yum install", "rocm install", "dependency", "packaging"],
+    "causes": "Missing deps, wrong OS repo, version conflict, partial install",
+    "solutions": "Run packaging test matrix, clean prior install, fix meta-package deps, validate repo config",
+    "similar_errors": "Unpack failed, transaction failed"
+  },
+  {
+    "id": "rocm_rccl_nccl",
+    "pattern": "Distributed GPU communication (RCCL/NCCL) failure",
+    "category": "GPU/Driver",
+    "severity": "CRITICAL",
+    "signatures": ["rccl", "nccl", "allreduce", "collective", "rank ", "bootstrap"],
+    "causes": "Fabric misconfig, wrong NIC, firewall, rank topology mismatch",
+    "solutions": "Validate NCCL/RCCL env vars, IB/RoCE config, multi-node topology, firewall rules",
+    "similar_errors": "Connection closed by peer during collective"
+  },
+  {
+    "id": "pytorch_cuda_rocm",
+    "pattern": "PyTorch / training framework device error on ROCm",
+    "category": "Runtime",
+    "severity": "HIGH",
+    "signatures": ["pytorch", "cuda", "hip", "device not found", "runtimeerror", "cudnn", "miopen"],
+    "causes": "Framework build mismatch, wrong torch-rocm wheel, OOM on GPU",
+    "solutions": "Match torch+ROCm versions, reduce batch size, rocm-smi memory check",
+    "similar_errors": "HIP out of memory"
+  },
+  {
+    "id": "docker_install_test",
+    "pattern": "Containerized ROCm install test failure",
+    "category": "Configuration",
+    "severity": "MEDIUM",
+    "signatures": ["docker", "container", "exit code", "install test", "ubuntu", "rhel", "sles"],
+    "causes": "Image drift, missing privileges, stale cache layer",
+    "solutions": "Rebuild image, verify --device flags, rerun parallel matrix on clean containers",
+    "similar_errors": "OCI runtime error"
+  }
+]
