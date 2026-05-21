@@ -135,7 +135,9 @@ flowchart TB
 
 **Root cause vs line-hit model:** A single CI failure often prints 3+ lines (Python `raise`, `subprocess.CalledProcessError`, GitHub `##[error] exit code 1`). ARVIL surfaces **one card** with collapsible related lines (`stack` | `wrapper`). Example: Multi-Arch run — `git diff` exit 128 maps to KB `git_diff_ci_fail`, not `rocm_hsa_status` from weak token `status`.
 
-**Deep analyze:** `POST /api/analyze` with `{ deep: true }` runs rules first, then `lib/llm-group.ts` (NVIDIA NIM or OpenAI JSON) to refine groups and add `deep_narrative`. Poll sync never calls the LLM.
+**Deep analyze:** `POST /api/analyze` with `{ deep: true, reanalyze: true }` runs rules first, then `lib/llm-group.ts` (NVIDIA NIM preferred, OpenAI fallback) to refine groups and add `deep_narrative`. Cached analyses are bypassed when `deep: true`. Neon stores `analysis_mode`, `llm_provider`, `llm_model` via `saveAnalysisV2`.
+
+**LLM diag:** `GET /api/analyze?diag=1` → `{ nvidia_api_key_set, openai_api_key_set, llm_ready }` (no secrets).
 
 **Test:** `npm run test:root-cause` — fixture L157–L159 → 1 group + `git_diff_ci_fail`.
 
@@ -274,7 +276,8 @@ User clicks "Sync now"
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
-| `/api/analyze` | POST | None | Analyze pasted log |
+| `/api/analyze` | POST | None | Analyze pasted or synced log (`deep: true` for LLM) |
+| `/api/analyze?diag=1` | GET | None | LLM env check (`llm_ready`, no secrets) |
 | `/api/sync` | POST/GET | Secret / same-origin | Poll TheRock failures |
 | `/api/sync?diag=1` | GET | None | Config health check |
 | `/api/history` | GET | None | List analyses + polled runs |

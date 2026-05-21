@@ -104,8 +104,21 @@ Merge duplicate causes. Do not treat ##[error] exit code lines as separate root 
     log_excerpt: logSnippet.slice(0, 12000),
   });
 
-  const raw = await chatJson(provider, system, user);
-  const parsed = parseLlmJson(raw);
+  let raw: string;
+  try {
+    raw = await chatJson(provider, system, user);
+  } catch (e) {
+    console.error("[ARVIL] LLM chat failed:", provider, e);
+    throw e;
+  }
+
+  let parsed: ReturnType<typeof parseLlmJson>;
+  try {
+    parsed = parseLlmJson(raw);
+  } catch (e) {
+    console.error("[ARVIL] LLM JSON parse failed:", provider, e);
+    throw new Error("LLM returned non-JSON response");
+  }
 
   const merged: RootCauseGroup[] = (parsed.root_causes ?? []).map((rc, i) => ({
     id: String(rc.id ?? `rc-${i + 1}`),

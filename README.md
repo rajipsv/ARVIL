@@ -69,6 +69,16 @@ Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let th
 | `GITHUB_TOKEN` | Yes for poll (read Actions on public repos) |
 | `GITHUB_REPO` | `ROCm/TheRock` |
 | `POLL_CRON_SECRET` | Recommended |
+| `NVIDIA_API_KEY` | For **Deep analyze** (NVIDIA NIM on Vercel) |
+| `NVIDIA_MODEL` | Optional — default `meta/llama-3.1-70b-instruct` |
+| `OPENAI_API_KEY` | Optional — fallback if NVIDIA unset |
+
+### Deep analyze (web UI)
+
+1. Add `NVIDIA_API_KEY` in Vercel → **Redeploy** (required for env to apply).
+2. Open `https://YOUR-APP.vercel.app/api/analyze?diag=1` — expect `llm_ready: true`.
+3. In the app: select a synced log → **Deep analyze** (rules first, then LLM narrative).
+4. Scheduled **poll/sync** still uses rules only (no LLM cost on cron).
 
 ### GitHub repo secrets (for scheduled poll)
 
@@ -101,9 +111,9 @@ python -m agentic workflow/example.log
 
 | Provider | Env | Used by |
 |----------|-----|---------|
-| None | — | Web UI tool+RAG, `--tool-only` |
-| NVIDIA NIM | `NVIDIA_API_KEY` | Python ReAct agent |
-| OpenAI | `OPENAI_API_KEY` | Fallback for Python agent |
+| None | — | Web UI **Analyze**, poll/sync, Python `--tool-only` |
+| NVIDIA NIM | `NVIDIA_API_KEY` | Web **Deep analyze**, Python ReAct agent |
+| OpenAI | `OPENAI_API_KEY` | Fallback for Deep analyze + Python agent |
 
 ## Security
 

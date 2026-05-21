@@ -198,6 +198,7 @@ export default function Home() {
       setDeepLoading(Boolean(opts?.deep));
       setError(null);
       if (opts?.reanalyze && !opts?.deep) setResult(null);
+      const forceReanalyze = Boolean(opts?.reanalyze || opts?.deep);
       try {
         const res = await fetch("/api/analyze", {
           method: "POST",
@@ -207,7 +208,7 @@ export default function Home() {
               ? {
                   artifactId: selectedArtifactId,
                   workflow,
-                  reanalyze: opts?.reanalyze ?? false,
+                  reanalyze: forceReanalyze,
                   deep: opts?.deep ?? false,
                 }
               : {
@@ -608,25 +609,47 @@ export default function Home() {
 
               {result.deep_status && (
                 <div
-                  className={`text-sm rounded-lg p-3 border ${
+                  className={`text-sm rounded-lg p-4 border ${
                     result.deep_status === "ok"
-                      ? "text-purple-200/90 border-purple-900/50 bg-purple-950/20"
+                      ? "text-purple-100 border-purple-700/50 bg-purple-950/30"
                       : result.deep_status === "skipped"
                         ? "text-amber-200/90 border-amber-900/50 bg-amber-950/30"
                         : "text-red-200/90 border-red-900/50 bg-red-950/30"
                   }`}
                 >
-                  <p className="font-medium text-xs uppercase tracking-wide mb-1">
+                  <p className="font-semibold text-sm mb-2">
                     Deep analyze
                     {result.deep_status === "ok" && result.llm_provider
                       ? ` · ${result.llm_provider}`
                       : ` · ${result.deep_status}`}
                   </p>
-                  <p>
+                  <p className="leading-relaxed">
                     {result.deep_message ??
                       result.deep_narrative ??
                       "No deep analyze output."}
                   </p>
+                  {result.deep_status === "skipped" && (
+                    <p className="text-xs mt-3 text-amber-300/80">
+                      After adding{" "}
+                      <code className="text-orange-300">NVIDIA_API_KEY</code> on
+                      Vercel, redeploy and open{" "}
+                      <a
+                        href="/api/analyze?diag=1"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline hover:text-white"
+                      >
+                        /api/analyze?diag=1
+                      </a>{" "}
+                      — expect <code className="text-orange-300">llm_ready: true</code>.
+                    </p>
+                  )}
+                  {result.deep_status === "failed" && (
+                    <p className="text-xs mt-2 opacity-80">
+                      Rule-based results below are still valid. Retry after checking
+                      the diag endpoint and Vercel logs.
+                    </p>
+                  )}
                 </div>
               )}
 

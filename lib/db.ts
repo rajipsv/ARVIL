@@ -230,6 +230,16 @@ export async function chunkLogContent(artifactId: string, logContent: string) {
   }
 }
 
+function resolveLlmModel(result: AnalysisResult): string | null {
+  if (result.llm_provider === "nvidia") {
+    return process.env.NVIDIA_MODEL?.trim() || "meta/llama-3.1-70b-instruct";
+  }
+  if (result.llm_provider === "openai") {
+    return process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+  }
+  return null;
+}
+
 export async function saveAnalysisV2(
   result: AnalysisResult,
   logContent: string,
@@ -256,13 +266,18 @@ export async function saveAnalysisV2(
     });
   }
 
+  const analysisMode = result.analysis_mode ?? "tool_rag";
+  const llmProvider = result.llm_provider ?? "none";
+  const llmModel = resolveLlmModel(result);
+
   const rows = (await sql`
     INSERT INTO log_analyses (
-      artifact_id, workflow, source_label, analysis_mode, llm_provider,
+      artifact_id, workflow, source_label, analysis_mode, llm_provider, llm_model,
       line_count, errors_count, summary, log_preview, result_json
     ) VALUES (
       ${artId}::uuid, ${result.workflow}, ${result.source_label},
-      ${result.mode}, 'none', ${result.line_count}, ${result.errors_count},
+      ${analysisMode}, ${llmProvider}, ${llmModel},
+      ${result.line_count}, ${result.errors_count},
       ${result.summary}, ${preview}, ${JSON.stringify(result)}
     )
     RETURNING id::text

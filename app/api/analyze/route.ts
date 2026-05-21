@@ -1,4 +1,5 @@
 import { analyzeLog, analyzeLogDeep } from "@/lib/analyzer";
+import { getLlmDiag } from "@/lib/llm-config";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import {
   getArtifactDetail,
@@ -11,6 +12,16 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("diag") === "1") {
+    return NextResponse.json(getLlmDiag());
+  }
+  return NextResponse.json({
+    error: "Use POST to analyze logs, or GET ?diag=1 for LLM env check.",
+  });
+}
 
 const VALID_WORKFLOWS: WorkflowPreset[] = [
   "therock_multi_arch",
@@ -73,7 +84,7 @@ export async function POST(req: NextRequest) {
       }
       logContent = fromDb;
 
-      if (!reanalyze && latest?.result_json) {
+      if (!reanalyze && !deep && latest?.result_json) {
         const raw = latest.result_json as AnalysisResult;
         if (!isLegacyAnalysis(raw)) {
           return NextResponse.json({
