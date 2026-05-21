@@ -15,6 +15,14 @@ ARVIL/
   .github/workflows/  poll-therock.yml (scheduled sync — no Vercel Cron)
 ```
 
+## Deploy on Vercel
+
+**Root Directory must be `web`** (the Next.js app is not at repo root).
+
+1. Vercel → Project → **Settings** → **General** → **Root Directory** → `web` → Save  
+2. Or use root [vercel.json](vercel.json) with `"rootDirectory": "web"` (already in repo)  
+3. **Redeploy** — build should show `next build`, not “no frameworks detected”
+
 ## Quick start (web)
 
 ```bash
