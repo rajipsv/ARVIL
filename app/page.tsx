@@ -1,7 +1,13 @@
 "use client";
 
 import { WORKFLOW_HINTS } from "@/lib/analyzer";
-import type { AnalysisResult, HistoryItem, WorkflowPreset } from "@/lib/types";
+import type {
+  AnalysisResult,
+  HistoryItem,
+  SyncedLogArtifact,
+  WorkflowPreset,
+} from "@/lib/types";
+import { workflowNameToPreset } from "@/lib/workflow-map";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const WORKFLOWS = Object.keys(WORKFLOW_HINTS) as WorkflowPreset[];
@@ -21,17 +27,27 @@ export default function Home() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [polledRuns, setPolledRuns] = useState<Array<Record<string, unknown>>>([]);
+  const [syncedLogs, setSyncedLogs] = useState<SyncedLogArtifact[]>([]);
+  const [selectedArtifactId, setSelectedArtifactId] = useState("");
+  const [loadingArtifact, setLoadingArtifact] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadHistory = useCallback(async () => {
     try {
-      const res = await fetch("/api/history");
-      const data = await res.json();
-      if (res.ok) {
-        if (data.items) setHistory(data.items);
-        if (data.polledRuns) setPolledRuns(data.polledRuns);
+      const [histRes, artRes] = await Promise.all([
+        fetch("/api/history"),
+        fetch("/api/artifacts"),
+      ]);
+      const histData = await histRes.json();
+      if (histRes.ok) {
+        if (histData.items) setHistory(histData.items);
+        if (histData.polledRuns) setPolledRuns(histData.polledRuns);
+      }
+      const artData = await artRes.json();
+      if (artRes.ok && artData.artifacts) {
+        setSyncedLogs(artData.artifacts as SyncedLogArtifact[]);
       }
     } catch {
       /* Neon optional */
@@ -87,34 +103,83 @@ export default function Home() {
     reader.readAsText(file);
   }, []);
 
-  const analyze = useCallback(async () => {
-    if (!logContent.trim()) {
-      setError("Paste a log or upload a file from TheRock Actions.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          logContent,
-          workflow,
-          sourceLabel: fileName ?? "paste",
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Request failed");
-      setResult(data);
-      loadHistory();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [logContent, workflow, fileName, loadHistory]);
+  const loadSelectedArtifact = useCallback(
+    async (artifactId: string, opts?: { viewOnly?: boolean }) => {
+      if (!artifactId) return;
+      setLoadingArtifact(true);
+      setError(null);
+      try {
+        const detailRes = await fetch(`/api/artifacts?id=${artifactId}`);
+        const detail = await detailRes.json();
+        if (!detailRes.ok) throw new Error(detail.error ?? "Failed to load log");
+
+        setSelectedArtifactId(artifactId);
+        setLogContent(detail.log_text ?? "");
+        const wfName = String(detail.workflow_name ?? "");
+        if (wfName) setWorkflow(workflowNameToPreset(wfName));
+        setFileName(
+          `run-${detail.github_run_id ?? "?"} — ${detail.job_name ?? "job"}`
+        );
+
+        if (opts?.viewOnly && detail.latest_analysis?.result_json) {
+          setResult(detail.latest_analysis.result_json as AnalysisResult);
+          return;
+        }
+
+        if (detail.latest_analysis?.result_json && !opts?.viewOnly) {
+          setResult(detail.latest_analysis.result_json as AnalysisResult);
+        } else {
+          setResult(null);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load synced log");
+      } finally {
+        setLoadingArtifact(false);
+      }
+    },
+    []
+  );
+
+  const analyze = useCallback(
+    async (opts?: { reanalyze?: boolean }) => {
+      const useArtifact = Boolean(selectedArtifactId);
+      if (!useArtifact && !logContent.trim()) {
+        setError("Select a synced log, or paste / upload a log file.");
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      if (opts?.reanalyze) setResult(null);
+      try {
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            useArtifact
+              ? {
+                  artifactId: selectedArtifactId,
+                  workflow,
+                  reanalyze: opts?.reanalyze ?? false,
+                }
+              : {
+                  logContent,
+                  workflow,
+                  sourceLabel: fileName ?? "paste",
+                }
+          ),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Request failed");
+        setResult(data);
+        loadHistory();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Analysis failed");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [logContent, workflow, fileName, selectedArtifactId, loadHistory]
+  );
 
   const downloadJson = () => {
     if (!result) return;
@@ -197,6 +262,98 @@ export default function Home() {
             {syncMsg && <p className="text-xs text-green-400">{syncMsg}</p>}
           </div>
 
+          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-3">
+            <p className="text-xs font-medium text-arvil-muted">
+              Synced logs — select to analyze (from Neon)
+            </p>
+            {syncedLogs.length === 0 ? (
+              <p className="text-xs text-gray-500">
+                No synced logs yet. Click &quot;Sync now&quot; above, then pick a job
+                log here.
+              </p>
+            ) : (
+              <>
+                <select
+                  value={selectedArtifactId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedArtifactId(id);
+                    if (id) loadSelectedArtifact(id);
+                  }}
+                  disabled={loadingArtifact || loading}
+                  className="w-full bg-arvil-bg border border-arvil-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arvil-accent"
+                >
+                  <option value="">— Select a synced job log —</option>
+                  {syncedLogs.map((a) => (
+                    <option key={a.artifact_id} value={a.artifact_id}>
+                      #{a.github_run_id ?? "?"} · {a.job_name ?? "job"} ·{" "}
+                      {a.workflow_name ?? "workflow"}
+                      {a.errors_count != null ? ` · ${a.errors_count} err` : ""}
+                    </option>
+                  ))}
+                </select>
+                <ul className="max-h-28 overflow-y-auto space-y-1 border-t border-arvil-border pt-2">
+                  {syncedLogs.slice(0, 8).map((a) => (
+                    <li key={a.artifact_id}>
+                      <button
+                        type="button"
+                        onClick={() => loadSelectedArtifact(a.artifact_id)}
+                        className={`text-left text-xs w-full px-2 py-1 rounded hover:bg-arvil-bg ${
+                          selectedArtifactId === a.artifact_id
+                            ? "bg-arvil-bg text-orange-300"
+                            : "text-gray-400"
+                        }`}
+                      >
+                        <span className="font-medium text-orange-400">
+                          #{String(a.github_run_id)}
+                        </span>{" "}
+                        {a.job_name} — {a.line_count.toLocaleString()} lines
+                        {a.summary ? (
+                          <span className="block truncate text-gray-500">
+                            {a.summary}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={!selectedArtifactId || loading || loadingArtifact}
+                    onClick={() =>
+                      loadSelectedArtifact(selectedArtifactId, { viewOnly: true })
+                    }
+                    className="px-3 py-1.5 rounded-lg border border-arvil-border text-xs hover:border-arvil-accent disabled:opacity-50"
+                  >
+                    View saved analysis
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectedArtifactId || loading || loadingArtifact}
+                    onClick={() => analyze()}
+                    className="px-3 py-1.5 rounded-lg border border-arvil-accent text-arvil-accent text-xs hover:bg-arvil-accent hover:text-white disabled:opacity-50"
+                  >
+                    Analyze selected
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!selectedArtifactId || loading || loadingArtifact}
+                    onClick={() => analyze({ reanalyze: true })}
+                    className="px-3 py-1.5 rounded-lg text-xs text-arvil-muted hover:text-white disabled:opacity-50"
+                  >
+                    Re-analyze
+                  </button>
+                </div>
+              </>
+            )}
+            {loadingArtifact && (
+              <p className="text-xs text-arvil-muted animate-pulse">
+                Loading log from database…
+              </p>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -230,13 +387,13 @@ export default function Home() {
           <textarea
             value={logContent}
             onChange={(e) => setLogContent(e.target.value)}
-            placeholder="Paste GitHub Actions job log here (failed step)..."
+            placeholder="Select a synced log above, or paste a GitHub Actions job log here..."
             className="w-full h-80 font-mono text-xs bg-arvil-panel border border-arvil-border rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-arvil-accent resize-y"
           />
 
           <button
             type="button"
-            onClick={analyze}
+            onClick={() => analyze()}
             disabled={loading}
             className="w-full py-3 rounded-lg bg-arvil-accent hover:bg-orange-600 text-white font-semibold disabled:opacity-50 transition"
           >
@@ -290,19 +447,9 @@ export default function Home() {
           )}
 
           <ol className="text-xs text-arvil-muted space-y-1 list-decimal list-inside border-t border-arvil-border pt-4">
-            <li>
-              Open{" "}
-              <a
-                href="https://github.com/ROCm/TheRock/actions"
-                className="text-orange-400"
-                target="_blank"
-                rel="noreferrer"
-              >
-                TheRock Actions
-              </a>
-            </li>
-            <li>Failed run → failed job → Download log</li>
-            <li>Upload or paste → Analyze</li>
+            <li>Sync failed runs from TheRock (primary)</li>
+            <li>Select a synced job log → Analyze or view saved triage</li>
+            <li>Or paste / upload a log manually</li>
           </ol>
         </section>
 
@@ -346,6 +493,11 @@ export default function Home() {
                   {result.saved_id && (
                     <span className="px-2 py-1 rounded bg-green-950 text-green-400">
                       saved {result.saved_id.slice(0, 8)}…
+                    </span>
+                  )}
+                  {"from_cache" in result && (result as AnalysisResult & { from_cache?: boolean }).from_cache && (
+                    <span className="px-2 py-1 rounded bg-blue-950 text-blue-300">
+                      from sync
                     </span>
                   )}
                 </div>

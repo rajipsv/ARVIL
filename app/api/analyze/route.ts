@@ -1,6 +1,11 @@
 import { analyzeLog } from "@/lib/analyzer";
-import { saveAnalysis } from "@/lib/db";
-import type { WorkflowPreset } from "@/lib/types";
+import {
+  getArtifactDetail,
+  getArtifactLogText,
+  saveAnalysisV2,
+} from "@/lib/db";
+import type { AnalysisResult, WorkflowPreset } from "@/lib/types";
+import { workflowNameToPreset } from "@/lib/workflow-map";
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 60;
@@ -17,16 +22,69 @@ const VALID_WORKFLOWS: WorkflowPreset[] = [
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const logContent = typeof body.logContent === "string" ? body.logContent : "";
-    const workflow = VALID_WORKFLOWS.includes(body.workflow)
+    const artifactId =
+      typeof body.artifactId === "string" ? body.artifactId.trim() : "";
+    const reanalyze = Boolean(body.reanalyze);
+    const viewOnly = Boolean(body.viewOnly);
+
+    let logContent = typeof body.logContent === "string" ? body.logContent : "";
+    let workflow: WorkflowPreset = VALID_WORKFLOWS.includes(body.workflow)
       ? body.workflow
       : "therock_multi_arch";
-    const sourceLabel =
+    let sourceLabel =
       typeof body.sourceLabel === "string" ? body.sourceLabel : "upload";
+    let linkedArtifactId: string | null = null;
+
+    if (artifactId) {
+      const detail = await getArtifactDetail(artifactId);
+      if (!detail) {
+        return NextResponse.json({ error: "Synced log not found" }, { status: 404 });
+      }
+      const meta = detail as Record<string, unknown>;
+
+      linkedArtifactId = artifactId;
+      const wfName = String(meta.workflow_name ?? "");
+      if (wfName) workflow = workflowNameToPreset(wfName);
+      sourceLabel = `synced-${String(meta.github_run_id ?? "run")}-${String(meta.job_name ?? "job")}`;
+
+      const latest = meta.latest_analysis as Record<string, unknown> | null;
+
+      if (viewOnly && latest?.result_json) {
+        const existing = latest.result_json as AnalysisResult;
+        return NextResponse.json({
+          ...existing,
+          saved_id: String(latest.id),
+          artifact_id: artifactId,
+          from_cache: true,
+        });
+      }
+
+      const fromDb = await getArtifactLogText(artifactId);
+      if (!fromDb?.trim()) {
+        return NextResponse.json(
+          { error: "No log text stored for this artifact" },
+          { status: 400 }
+        );
+      }
+      logContent = fromDb;
+
+      if (!reanalyze && latest?.result_json) {
+        const existing = latest.result_json as AnalysisResult;
+        return NextResponse.json({
+          ...existing,
+          saved_id: String(latest.id),
+          artifact_id: artifactId,
+          from_cache: true,
+        });
+      }
+    }
 
     if (!logContent.trim()) {
       return NextResponse.json(
-        { error: "Log content is empty. Paste or upload a log file." },
+        {
+          error:
+            "Select a synced log, or paste / upload a log file.",
+        },
         { status: 400 }
       );
     }
@@ -41,11 +99,19 @@ export async function POST(req: NextRequest) {
     const result = analyzeLog(logContent, workflow, sourceLabel);
     let savedId: string | null = null;
     try {
-      savedId = await saveAnalysis(result, logContent);
+      savedId = await saveAnalysisV2(
+        result,
+        logContent,
+        linkedArtifactId
+      );
     } catch (dbErr) {
       console.error("Neon save failed:", dbErr);
     }
-    return NextResponse.json({ ...result, saved_id: savedId });
+    return NextResponse.json({
+      ...result,
+      saved_id: savedId,
+      artifact_id: linkedArtifactId,
+    });
   } catch (e) {
     console.error(e);
     return NextResponse.json(

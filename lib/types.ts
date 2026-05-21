@@ -66,3 +66,20 @@ export interface HistoryItem {
   errors_count: number;
   summary: string | null;
 }
+
+/** Synced job log available for select-and-analyze in the UI. */
+export interface SyncedLogArtifact {
+  artifact_id: string;
+  run_id: string | null;
+  github_run_id: number | null;
+  html_url: string | null;
+  workflow_name: string | null;
+  job_name: string | null;
+  ingestion_source: string;
+  line_count: number;
+  byte_size: number;
+  created_at: string;
+  analysis_id: string | null;
+  errors_count: number | null;
+  summary: string | null;
+}

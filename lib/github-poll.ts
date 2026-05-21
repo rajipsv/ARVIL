@@ -11,7 +11,7 @@ import {
   saveAnalysisV2,
   upsertCiRun,
 } from "./db";
-import type { WorkflowPreset } from "./types";
+import { workflowNameToPreset } from "./workflow-map";
 
 const GITHUB_API = "https://api.github.com";
 const LOG_PREVIEW_MAX = 32_000;
@@ -97,16 +97,6 @@ async function ghErrorDetail(res: Response): Promise<string> {
 
 function hashContent(text: string): string {
   return createHash("sha256").update(text).digest("hex");
-}
-
-function workflowNameToPreset(name: string): WorkflowPreset {
-  const n = name.toLowerCase();
-  if (n.includes("multi-arch") && n.includes("asan")) return "therock_multi_arch";
-  if (n.includes("multi-arch")) return "therock_multi_arch";
-  if (n.includes("pytorch") || n.includes("wheel")) return "therock_pytorch";
-  if (n.includes("unit test") || n.includes("ctest")) return "therock_unit_tests";
-  if (n.includes("install") || n.includes("native linux")) return "therock_install";
-  return "custom";
 }
 
 async function downloadJobLogText(

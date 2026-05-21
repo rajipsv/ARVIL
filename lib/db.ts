@@ -345,3 +345,116 @@ export async function getAnalysisById(id: string) {
   `) as Record<string, unknown>[];
   return rows[0] ?? null;
 }
+
+export async function listIngestedArtifacts(limit = 40) {
+  const sql = getDb();
+  if (!sql) return [];
+  await ensureSchemaV2();
+
+  const rows = (await sql`
+    SELECT
+      a.id::text AS artifact_id,
+      r.id::text AS run_id,
+      r.github_run_id,
+      r.html_url,
+      w.workflow_name,
+      a.job_name,
+      a.ingestion_source,
+      a.line_count,
+      a.byte_size,
+      a.created_at,
+      (
+        SELECT la.id::text FROM log_analyses la
+        WHERE la.artifact_id = a.id
+        ORDER BY la.created_at DESC LIMIT 1
+      ) AS analysis_id,
+      (
+        SELECT la.errors_count FROM log_analyses la
+        WHERE la.artifact_id = a.id
+        ORDER BY la.created_at DESC LIMIT 1
+      ) AS errors_count,
+      (
+        SELECT la.summary FROM log_analyses la
+        WHERE la.artifact_id = a.id
+        ORDER BY la.created_at DESC LIMIT 1
+      ) AS summary
+    FROM log_artifacts a
+    LEFT JOIN ci_runs r ON r.id = a.run_id
+    LEFT JOIN ci_workflows w ON w.id = r.workflow_id
+    ORDER BY a.created_at DESC
+    LIMIT ${limit}
+  `) as Array<Record<string, unknown>>;
+
+  return rows;
+}
+
+export async function getArtifactLogText(artifactId: string): Promise<string | null> {
+  const sql = getDb();
+  if (!sql) return null;
+  await ensureSchemaV2();
+
+  const arts = (await sql`
+    SELECT content_preview, byte_size
+    FROM log_artifacts WHERE id = ${artifactId}::uuid
+  `) as { content_preview: string | null; byte_size: number }[];
+
+  if (!arts[0]) return null;
+
+  const chunks = (await sql`
+    SELECT content FROM log_chunks
+    WHERE artifact_id = ${artifactId}::uuid
+    ORDER BY chunk_index ASC
+  `) as { content: string }[];
+
+  let text = arts[0].content_preview ?? "";
+  if (chunks.length > 0) {
+    const joined = chunks.map((c) => c.content).join("\n");
+    if (joined.length > text.length) {
+      text = text ? `${text}\n\n--- additional log windows ---\n\n${joined}` : joined;
+    }
+  }
+  return text;
+}
+
+export async function getArtifactDetail(artifactId: string) {
+  const sql = getDb();
+  if (!sql) return null;
+  await ensureSchemaV2();
+
+  const rows = (await sql`
+    SELECT
+      a.id::text AS artifact_id,
+      a.job_name,
+      a.ingestion_source,
+      a.line_count,
+      a.byte_size,
+      a.created_at,
+      r.id::text AS run_id,
+      r.github_run_id,
+      r.html_url,
+      r.branch,
+      w.workflow_name
+    FROM log_artifacts a
+    LEFT JOIN ci_runs r ON r.id = a.run_id
+    LEFT JOIN ci_workflows w ON w.id = r.workflow_id
+    WHERE a.id = ${artifactId}::uuid
+  `) as Array<Record<string, unknown>>;
+
+  if (!rows[0]) return null;
+
+  const analysisRows = (await sql`
+    SELECT id::text, workflow, errors_count, summary, result_json, created_at
+    FROM log_analyses
+    WHERE artifact_id = ${artifactId}::uuid
+    ORDER BY created_at DESC
+    LIMIT 1
+  `) as Array<Record<string, unknown>>;
+
+  const logText = await getArtifactLogText(artifactId);
+
+  return {
+    ...rows[0],
+    log_text: logText,
+    latest_analysis: analysisRows[0] ?? null,
+  };
+}
