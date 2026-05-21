@@ -17,11 +17,10 @@ ARVIL/
 
 ## Deploy on Vercel
 
-**Root Directory must be `web`** (the Next.js app is not at repo root).
+**Root Directory must be `web`** (set in the Vercel UI only — not in `vercel.json`).
 
-1. Vercel → Project → **Settings** → **General** → **Root Directory** → `web` → Save  
-2. Or use root [vercel.json](vercel.json) with `"rootDirectory": "web"` (already in repo)  
-3. **Redeploy** — build should show `next build`, not “no frameworks detected”
+1. Vercel → Project → **Settings** → **General** → **Root Directory** → type **`web`** → Save  
+2. **Redeploy** — build log should show `npm install` and `next build` (not “no frameworks detected” in 49ms)
 
 ## Quick start (web)
 
