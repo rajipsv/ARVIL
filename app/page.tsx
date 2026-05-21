@@ -4,6 +4,7 @@ import { WORKFLOW_HINTS } from "@/lib/analyzer";
 import type {
   AnalysisResult,
   HistoryItem,
+  RootCauseGroup,
   SyncedLogArtifact,
   WorkflowPreset,
 } from "@/lib/types";
@@ -173,7 +174,7 @@ export default function Home() {
   );
 
   const analyze = useCallback(
-    async (opts?: { reanalyze?: boolean }) => {
+    async (opts?: { reanalyze?: boolean; deep?: boolean }) => {
       const useArtifact = Boolean(selectedArtifactId);
       if (!useArtifact && !logContent.trim()) {
         setError("Select a synced log, or paste / upload a log file.");
@@ -192,11 +193,13 @@ export default function Home() {
                   artifactId: selectedArtifactId,
                   workflow,
                   reanalyze: opts?.reanalyze ?? false,
+                  deep: opts?.deep ?? false,
                 }
               : {
                   logContent,
                   workflow,
                   sourceLabel: fileName ?? "paste",
+                  deep: opts?.deep ?? false,
                 }
           ),
         });
@@ -226,6 +229,20 @@ export default function Home() {
 
   const hint = WORKFLOW_HINTS[workflow];
   const categoryLabel = PRESET_LABELS[workflow];
+  const rootCauses: RootCauseGroup[] =
+    result?.root_causes?.length
+      ? result.root_causes
+      : (result?.errors ?? []).map((e, i) => ({
+          id: `rc-${i + 1}`,
+          primary_line: e.line_number,
+          primary_message: e.message,
+          severity: e.severity,
+          category: e.category,
+          recommendation: e.recommendation,
+          kb_pattern_id: e.kb_pattern_id,
+          type: e.type,
+          related_lines: [],
+        }));
 
   return (
     <main className="min-h-screen">
@@ -400,7 +417,16 @@ export default function Home() {
                   onClick={() => analyze({ reanalyze: true })}
                   className="px-3 py-1.5 rounded-lg border border-arvil-accent text-arvil-accent text-xs hover:bg-arvil-accent hover:text-white disabled:opacity-50"
                 >
-                  Re-analyze
+                  Analyze
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || loadingArtifact}
+                  onClick={() => analyze({ reanalyze: true, deep: true })}
+                  className="px-3 py-1.5 rounded-lg border border-purple-500/60 text-purple-300 text-xs hover:bg-purple-950/50 disabled:opacity-50"
+                  title="Requires NVIDIA_API_KEY or OPENAI_API_KEY on Vercel"
+                >
+                  Deep analyze
                 </button>
               </div>
             )}
@@ -456,14 +482,24 @@ export default function Home() {
             className="w-full h-48 font-mono text-xs bg-arvil-bg border border-arvil-border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-arvil-accent resize-y"
           />
 
-          <button
-            type="button"
-            onClick={() => analyze()}
-            disabled={loading || !logContent.trim()}
-            className="w-full py-2 rounded-lg border border-arvil-border text-sm hover:border-arvil-accent disabled:opacity-50"
-          >
-            {loading ? "Analyzing…" : "Analyze pasted log"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => analyze()}
+              disabled={loading || !logContent.trim()}
+              className="flex-1 py-2 rounded-lg border border-arvil-border text-sm hover:border-arvil-accent disabled:opacity-50"
+            >
+              {loading ? "Analyzing…" : "Analyze"}
+            </button>
+            <button
+              type="button"
+              onClick={() => analyze({ deep: true })}
+              disabled={loading || !logContent.trim()}
+              className="flex-1 py-2 rounded-lg border border-purple-500/50 text-sm text-purple-300 hover:bg-purple-950/40 disabled:opacity-50"
+            >
+              Deep analyze
+            </button>
+          </div>
             </div>
           </details>
 
@@ -519,8 +555,14 @@ export default function Home() {
                 <p className="text-sm mt-2 text-gray-300">{result.summary}</p>
                 <div className="flex flex-wrap gap-3 mt-4 text-xs">
                   <span className="px-2 py-1 rounded bg-arvil-bg">
-                    {result.errors_count} errors
+                    {result.errors_count} root cause
+                    {result.errors_count === 1 ? "" : "s"}
                   </span>
+                  {result.analysis_mode === "tool_rag_llm" && (
+                    <span className="px-2 py-1 rounded bg-purple-950 text-purple-300">
+                      LLM · {result.llm_provider}
+                    </span>
+                  )}
                   <span className="px-2 py-1 rounded bg-arvil-bg">
                     {result.line_count} lines
                   </span>
@@ -540,40 +582,75 @@ export default function Home() {
                 </div>
               </div>
 
+              {result.deep_narrative && (
+                <p className="text-sm text-purple-200/90 border border-purple-900/50 rounded-lg p-3 bg-purple-950/20">
+                  {result.deep_narrative}
+                </p>
+              )}
+
               <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
-                {result.errors.map((err, i) => (
+                {rootCauses.map((rc) => (
                   <article
-                    key={`${err.line_number}-${i}`}
+                    key={rc.id}
                     className="rounded-lg border border-arvil-border bg-arvil-panel p-4 text-sm"
                   >
                     <div className="flex flex-wrap gap-2 mb-2">
                       <span className="text-xs font-mono text-arvil-muted">
-                        L{err.line_number}
+                        L{rc.primary_line}
                       </span>
                       <span
                         className={`text-xs px-2 py-0.5 rounded ${
-                          err.severity === "CRITICAL"
+                          rc.severity === "CRITICAL"
                             ? "bg-red-900/50 text-red-300"
                             : "bg-amber-900/40 text-amber-200"
                         }`}
                       >
-                        {err.severity}
+                        {rc.severity}
                       </span>
                       <span className="text-xs px-2 py-0.5 rounded bg-arvil-bg">
-                        {err.category}
+                        {rc.category}
                       </span>
-                      {err.kb_pattern_id && (
+                      {rc.kb_pattern_id && (
                         <span className="text-xs px-2 py-0.5 rounded bg-orange-950 text-orange-300">
-                          KB: {err.kb_pattern_id}
+                          KB: {rc.kb_pattern_id}
+                        </span>
+                      )}
+                      {rc.related_lines.length > 0 && (
+                        <span className="text-xs text-gray-500">
+                          +{rc.related_lines.length} related
                         </span>
                       )}
                     </div>
+                    {rc.one_line_summary && (
+                      <p className="text-sm text-gray-200 mb-2">{rc.one_line_summary}</p>
+                    )}
                     <p className="font-mono text-xs text-gray-400 break-all">
-                      {err.message}
+                      {rc.primary_message}
                     </p>
                     <p className="mt-2 text-green-300/90 text-xs">
-                      {err.recommendation}
+                      {rc.recommendation}
                     </p>
+                    {rc.related_lines.length > 0 && (
+                      <details className="mt-3">
+                        <summary className="text-xs text-arvil-muted cursor-pointer hover:text-white">
+                          Related lines ({rc.related_lines.length})
+                        </summary>
+                        <ul className="mt-2 space-y-1.5">
+                          {rc.related_lines.map((rel) => (
+                            <li
+                              key={`${rel.line_number}-${rel.role}`}
+                              className="font-mono text-xs text-gray-500 break-all pl-2 border-l border-arvil-border"
+                            >
+                              <span className="text-arvil-muted">
+                                L{rel.line_number} · {rel.role}
+                              </span>
+                              <br />
+                              {rel.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </article>
                 ))}
               </div>

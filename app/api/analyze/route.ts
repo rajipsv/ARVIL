@@ -1,4 +1,4 @@
-import { analyzeLog } from "@/lib/analyzer";
+import { analyzeLog, analyzeLogDeep } from "@/lib/analyzer";
 import {
   getArtifactDetail,
   getArtifactLogText,
@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       typeof body.artifactId === "string" ? body.artifactId.trim() : "";
     const reanalyze = Boolean(body.reanalyze);
     const viewOnly = Boolean(body.viewOnly);
+    const deep = Boolean(body.deep);
 
     let logContent = typeof body.logContent === "string" ? body.logContent : "";
     let workflow: WorkflowPreset = VALID_WORKFLOWS.includes(body.workflow)
@@ -96,7 +97,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = analyzeLog(logContent, workflow, sourceLabel);
+    const result = deep
+      ? await analyzeLogDeep(logContent, workflow, sourceLabel)
+      : analyzeLog(logContent, workflow, sourceLabel);
     let savedId: string | null = null;
     try {
       savedId = await saveAnalysisV2(

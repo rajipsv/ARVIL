@@ -38,6 +38,27 @@ export interface LogError {
   kb_pattern_id: string | null;
 }
 
+export type LineRole = "root" | "stack" | "wrapper";
+
+export interface RelatedLine {
+  line_number: number;
+  message: string;
+  role: LineRole;
+}
+
+export interface RootCauseGroup {
+  id: string;
+  primary_line: number;
+  primary_message: string;
+  severity: string;
+  category: string;
+  recommendation: string;
+  kb_pattern_id: string | null;
+  type: string;
+  related_lines: RelatedLine[];
+  one_line_summary?: string;
+}
+
 export interface RagLookup {
   error_signature: string;
   matches: FailureMatch[];
@@ -49,12 +70,17 @@ export interface AnalysisResult {
   workflow: WorkflowPreset;
   source_label: string;
   line_count: number;
+  /** Count of root cause groups (not raw log line hits). */
   errors_count: number;
   summary: string;
   errors: LogError[];
+  root_causes: RootCauseGroup[];
   rag_lookups: RagLookup[];
   stats: Record<string, number>;
   saved_id?: string | null;
+  analysis_mode?: "tool_rag" | "tool_rag_llm";
+  llm_provider?: "none" | "nvidia" | "openai";
+  deep_narrative?: string;
 }
 
 export interface HistoryItem {

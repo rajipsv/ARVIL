@@ -3,6 +3,16 @@ import type { FailureMatch, FailurePattern } from "./types";
 
 const PATTERN_LIST = patterns as FailurePattern[];
 
+/** Minimum keyword score to attach a KB pattern (avoids weak token hits like "status"). */
+export const KB_MIN_SCORE = 10;
+
+const GPU_PATTERN_IDS = new Set([
+  "rocm_hsa_status",
+  "rocm_hip_error",
+  "rocm_rccl_nccl",
+  "pytorch_cuda_rocm",
+]);
+
 function patternDocument(p: FailurePattern): string {
   return [
     p.pattern,
@@ -42,9 +52,30 @@ export function keywordScore(query: string, p: FailurePattern): number {
   return score;
 }
 
+/** Git/subprocess lines should not match GPU driver KB patterns. */
+export function isNonGpuCiLine(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("git diff") ||
+    m.includes("git ") ||
+    m.includes("subprocess") ||
+    m.includes("calledprocesserror") ||
+    m.includes("diff --name-only") ||
+    m.includes("exit status 128")
+  );
+}
+
+function patternAllowed(patternId: string, message: string): boolean {
+  if (GPU_PATTERN_IDS.has(patternId) && isNonGpuCiLine(message)) {
+    return false;
+  }
+  return true;
+}
+
 export function lookupKnownFailure(
   errorSignature: string,
-  topK = 3
+  topK = 3,
+  minScore = KB_MIN_SCORE
 ): FailureMatch[] {
   const ranked = PATTERN_LIST.map((p) => ({
     pattern_id: p.id,
@@ -57,7 +88,10 @@ export function lookupKnownFailure(
     similar_errors: p.similar_errors,
     source: "keyword",
   }))
-    .filter((m) => m.score > 0)
+    .filter(
+      (m) =>
+        m.score >= minScore && patternAllowed(m.pattern_id, errorSignature)
+    )
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
 

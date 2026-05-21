@@ -130,13 +130,23 @@
     "similar_errors": "Test timeout"
   },
   {
+    "id": "git_diff_ci_fail",
+    "pattern": "Git diff / checkout failure in CI script",
+    "category": "Configuration",
+    "severity": "HIGH",
+    "signatures": ["git diff", "exit status 128", "CalledProcessError", "unknown revision", "bad object", "diff --name-only"],
+    "causes": "Missing commit in shallow checkout, wrong SHA, ref not fetched, or script using invalid revision",
+    "solutions": "Verify checkout fetch-depth, SHA exists on branch, run git fetch --tags, confirm bb1c030b is reachable from HEAD",
+    "similar_errors": "fatal: bad object, ambiguous argument"
+  },
+  {
     "id": "github_actions_fail",
     "pattern": "GitHub Actions job failure marker",
     "category": "Other",
     "severity": "MEDIUM",
-    "signatures": ["##[error]", "process completed with exit code", "cancelled", "failure"],
+    "signatures": ["##[error]", "process completed with exit code"],
     "causes": "Upstream step failed, timeout, runner issue",
-    "solutions": "Open failed step log, check prior step stderr",
+    "solutions": "Inspect the primary failure above this line — this is usually a job wrapper, not a new root cause",
     "similar_errors": "Job cancelled"
   }
 ]

@@ -117,18 +117,29 @@ flowchart TB
 
 ### 6.2 Analysis engine — web (`lib/analyzer.ts`)
 
-**Mode:** `arvil_web_tool_rag` (deterministic).
+**Modes:**
 
-**Pipeline:**
+| Mode | `analysis_mode` | When |
+|------|-----------------|------|
+| Default | `tool_rag` | Every analyze + GitHub poll sync |
+| Deep | `tool_rag_llm` | UI **Deep analyze** when `NVIDIA_API_KEY` or `OPENAI_API_KEY` is set |
+
+**Pipeline (default):**
 
 1. `getLogStats` — line count, keyword counts (ERROR, CRITICAL, etc.), `##[error]` count.
-2. `grepKeyword` — ERROR / CRITICAL / FATAL with context lines.
-3. `grepGithubErrors` — Azure DevOps-style `##[error]` and non-zero exit codes.
-4. `buildErrors` — dedupe lines, `lookupKnownFailure` per signature.
-5. `rag_lookups` — top matches from knowledge base for up to 8 signatures.
-6. `summary` — human-readable executive summary.
+2. `grepKeyword` / `grepGithubErrors` / `grepSubprocessFailures` — line hits.
+3. `buildErrors` — dedupe lines, `lookupKnownFailure` per signature (min score 10; GPU patterns blocked on `git`/`subprocess` lines).
+4. **`groupRootCauses`** (`lib/root-cause.ts`) — merge `CalledProcessError` stack lines, attach `##[error]` wrappers; `errors_count` = **group count**, not raw hits.
+5. `rag_lookups` — top KB matches for primary signatures.
+6. `summary` — e.g. “1 root cause (2 related log lines grouped)”.
 
-**Design choice:** Mirrors Python agent tools but runs synchronously in one request — fits Vercel 10s Hobby limit and avoids API keys on the edge.
+**Root cause vs line-hit model:** A single CI failure often prints 3+ lines (Python `raise`, `subprocess.CalledProcessError`, GitHub `##[error] exit code 1`). ARVIL surfaces **one card** with collapsible related lines (`stack` | `wrapper`). Example: Multi-Arch run — `git diff` exit 128 maps to KB `git_diff_ci_fail`, not `rocm_hsa_status` from weak token `status`.
+
+**Deep analyze:** `POST /api/analyze` with `{ deep: true }` runs rules first, then `lib/llm-group.ts` (NVIDIA NIM or OpenAI JSON) to refine groups and add `deep_narrative`. Poll sync never calls the LLM.
+
+**Test:** `npm run test:root-cause` — fixture L157–L159 → 1 group + `git_diff_ci_fail`.
+
+**Design choice:** Rules on every path; LLM optional — fits Vercel limits and keeps scheduled sync deterministic.
 
 ### 6.3 Knowledge base / RAG (`lib/knowledge.ts`, `lib/data/patterns.json`)
 

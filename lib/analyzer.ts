@@ -1,8 +1,15 @@
 import { lookupKnownFailure } from "./knowledge";
+import { refineRootCausesWithLlm } from "./llm-group";
+import {
+  buildSummaryFromGroups,
+  groupRootCauses,
+  rootCausesToErrors,
+} from "./root-cause";
 import type {
   AnalysisResult,
   LogError,
   RagLookup,
+  RootCauseGroup,
   WorkflowPreset,
 } from "./types";
 
@@ -82,6 +89,18 @@ function grepGithubErrors(content: string, maxMatches: number) {
   return hits;
 }
 
+function grepSubprocessFailures(content: string, maxMatches: number) {
+  const lines = content.split(/\r?\n/);
+  const rx = /CalledProcessError|subprocess\.|exit status \d+/i;
+  const hits: { line: number; text: string }[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!rx.test(lines[i])) continue;
+    hits.push({ line: i + 1, text: lines[i].trim() });
+    if (hits.length >= maxMatches) break;
+  }
+  return hits;
+}
+
 function buildErrors(
   hits: { line: number; text: string; type: string }[]
 ): LogError[] {
@@ -111,18 +130,22 @@ function buildErrors(
   return errors.slice(0, 50);
 }
 
-export function analyzeLog(
-  content: string,
-  workflow: WorkflowPreset = "therock_multi_arch",
-  sourceLabel = "pasted-log"
-): AnalysisResult {
-  const maxSize = 4_000_000;
-  const trimmed =
-    content.length > maxSize
-      ? content.slice(0, maxSize) + "\n... [truncated for serverless limit]"
-      : content;
+function enrichGroupsWithKb(groups: RootCauseGroup[]): RootCauseGroup[] {
+  return groups.map((g) => {
+    const matches = lookupKnownFailure(g.primary_message, 1);
+    const m0 = matches[0];
+    if (!m0) return g;
+    return {
+      ...g,
+      severity: m0.severity,
+      category: m0.category,
+      recommendation: m0.solutions,
+      kb_pattern_id: m0.pattern_id,
+    };
+  });
+}
 
-  const stats = getLogStats(trimmed);
+function collectHits(trimmed: string): { line: number; text: string; type: string }[] {
   const hits: { line: number; text: string; type: string }[] = [];
 
   for (const kw of ["ERROR", "CRITICAL", "FATAL"] as const) {
@@ -135,7 +158,29 @@ export function analyzeLog(
     hits.push({ ...h, type: "ERROR" });
   }
 
-  const errors = buildErrors(hits);
+  for (const h of grepSubprocessFailures(trimmed, 20)) {
+    hits.push({ ...h, type: "CRITICAL" });
+  }
+
+  return hits;
+}
+
+export function analyzeLog(
+  content: string,
+  workflow: WorkflowPreset = "therock_multi_arch",
+  sourceLabel = "pasted-log"
+): AnalysisResult {
+  const maxSize = 4_000_000;
+  const trimmed =
+    content.length > maxSize
+      ? content.slice(0, maxSize) + "\n... [truncated for serverless limit]"
+      : content;
+
+  const stats = getLogStats(trimmed);
+  const lineErrors = buildErrors(collectHits(trimmed));
+  const root_causes = enrichGroupsWithKb(groupRootCauses(lineErrors));
+  const errors = rootCausesToErrors(root_causes);
+
   const signatures = Array.from(new Set(errors.map((e) => e.message))).slice(0, 8);
   const rag_lookups: RagLookup[] = signatures.map((sig) => ({
     error_signature: sig,
@@ -143,15 +188,7 @@ export function analyzeLog(
   }));
 
   const wf = WORKFLOW_HINTS[workflow];
-  const critical = errors.filter((e) => e.severity === "CRITICAL").length;
-  const summary = [
-    `ARVIL analyzed ${stats.lines} lines (${workflow}).`,
-    `Found ${errors.length} error signatures (${critical} critical).`,
-    `Context: ${wf.label}.`,
-    errors[0]
-      ? `Top issue: ${errors[0].message.slice(0, 120)}`
-      : "No standard ERROR/CRITICAL/FATAL markers — check ##[error] lines or paste failed step only.",
-  ].join(" ");
+  const summary = buildSummaryFromGroups(root_causes, stats.lines, wf.label);
 
   return {
     timestamp: new Date().toISOString(),
@@ -159,10 +196,62 @@ export function analyzeLog(
     workflow,
     source_label: sourceLabel,
     line_count: stats.lines,
-    errors_count: errors.length,
+    errors_count: root_causes.length,
     summary,
     errors,
+    root_causes,
     rag_lookups,
     stats,
+    analysis_mode: "tool_rag",
+    llm_provider: "none",
   };
+}
+
+export async function analyzeLogDeep(
+  content: string,
+  workflow: WorkflowPreset = "therock_multi_arch",
+  sourceLabel = "pasted-log"
+): Promise<AnalysisResult> {
+  const base = analyzeLog(content, workflow, sourceLabel);
+  const snippet = content.slice(0, 50_000);
+
+  try {
+    const llm = await refineRootCausesWithLlm(snippet, base.root_causes);
+    if (!llm) {
+      return {
+        ...base,
+        summary:
+          base.summary +
+          " Deep analyze skipped (set NVIDIA_API_KEY or OPENAI_API_KEY on Vercel).",
+      };
+    }
+
+    const root_causes = enrichGroupsWithKb(llm.groups);
+    const errors = rootCausesToErrors(root_causes);
+    const wf = WORKFLOW_HINTS[workflow];
+    const summary = [
+      buildSummaryFromGroups(root_causes, base.line_count, wf.label),
+      llm.narrative,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return {
+      ...base,
+      mode: "arvil_web_tool_rag_llm",
+      summary,
+      errors,
+      root_causes,
+      errors_count: root_causes.length,
+      analysis_mode: "tool_rag_llm",
+      llm_provider: llm.provider,
+      deep_narrative: llm.narrative,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "LLM failed";
+    return {
+      ...base,
+      summary: `${base.summary} Deep analyze failed: ${msg}`,
+    };
+  }
 }
