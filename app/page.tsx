@@ -33,6 +33,7 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
+  const [deepLoading, setDeepLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const applyResult = useCallback((data: AnalysisResult) => {
@@ -167,13 +168,14 @@ export default function Home() {
         );
 
         if (opts?.viewOnly && detail.latest_analysis?.result_json) {
-          setResult(detail.latest_analysis.result_json as AnalysisResult);
+          applyResult(detail.latest_analysis.result_json as AnalysisResult);
           return;
         }
 
         if (detail.latest_analysis?.result_json && !opts?.viewOnly) {
-          setResult(detail.latest_analysis.result_json as AnalysisResult);
+          applyResult(detail.latest_analysis.result_json as AnalysisResult);
         } else {
+          setAnalysisUpgraded(false);
           setResult(null);
         }
       } catch (err) {
@@ -193,8 +195,9 @@ export default function Home() {
         return;
       }
       setLoading(true);
+      setDeepLoading(Boolean(opts?.deep));
       setError(null);
-      if (opts?.reanalyze) setResult(null);
+      if (opts?.reanalyze && !opts?.deep) setResult(null);
       try {
         const res = await fetch("/api/analyze", {
           method: "POST",
@@ -223,6 +226,7 @@ export default function Home() {
         setError(err instanceof Error ? err.message : "Analysis failed");
       } finally {
         setLoading(false);
+        setDeepLoading(false);
       }
     },
     [logContent, workflow, fileName, selectedArtifactId, loadCategoryData, applyResult]
@@ -429,7 +433,7 @@ export default function Home() {
                   onClick={() => analyze({ reanalyze: true })}
                   className="px-3 py-1.5 rounded-lg border border-arvil-accent text-arvil-accent text-xs hover:bg-arvil-accent hover:text-white disabled:opacity-50"
                 >
-                  Analyze
+                  Re-analyze
                 </button>
                 <button
                   type="button"
@@ -547,7 +551,9 @@ export default function Home() {
 
           {loading && (
             <div className="rounded-lg border border-arvil-border bg-arvil-panel p-8 text-center text-arvil-muted animate-pulse">
-              Running grep + RAG knowledge base...
+              {deepLoading
+                ? "Deep analyze — calling LLM (rules run first)…"
+                : "Running grep + RAG on failure region…"}
             </div>
           )}
 
@@ -600,13 +606,37 @@ export default function Home() {
                 </div>
               </div>
 
-              {result.deep_narrative && (
-                <p className="text-sm text-purple-200/90 border border-purple-900/50 rounded-lg p-3 bg-purple-950/20">
-                  {result.deep_narrative}
-                </p>
+              {result.deep_status && (
+                <div
+                  className={`text-sm rounded-lg p-3 border ${
+                    result.deep_status === "ok"
+                      ? "text-purple-200/90 border-purple-900/50 bg-purple-950/20"
+                      : result.deep_status === "skipped"
+                        ? "text-amber-200/90 border-amber-900/50 bg-amber-950/30"
+                        : "text-red-200/90 border-red-900/50 bg-red-950/30"
+                  }`}
+                >
+                  <p className="font-medium text-xs uppercase tracking-wide mb-1">
+                    Deep analyze
+                    {result.deep_status === "ok" && result.llm_provider
+                      ? ` · ${result.llm_provider}`
+                      : ` · ${result.deep_status}`}
+                  </p>
+                  <p>
+                    {result.deep_message ??
+                      result.deep_narrative ??
+                      "No deep analyze output."}
+                  </p>
+                </div>
               )}
 
               <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                {rootCauses.length === 0 && (
+                  <p className="text-sm text-arvil-muted p-4 border border-dashed border-arvil-border rounded-lg">
+                    No root cause cards to display. Check the summary or try
+                    Analyze again.
+                  </p>
+                )}
                 {rootCauses.map((rc) => (
                   <article
                     key={rc.id}

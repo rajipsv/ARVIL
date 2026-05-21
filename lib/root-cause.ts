@@ -181,7 +181,54 @@ export function groupRootCauses(lineErrors: LogError[]): RootCauseGroup[] {
     }
   }
 
-  return groups;
+  return mergeProximityGroups(groups);
+}
+
+/** Merge separate groups that belong to the same job failure (close line numbers). */
+export function mergeProximityGroups(
+  groups: RootCauseGroup[],
+  maxGap = 40
+): RootCauseGroup[] {
+  if (groups.length <= 1) return groups;
+
+  const sorted = [...groups].sort((a, b) => a.primary_line - b.primary_line);
+  const out: RootCauseGroup[] = [];
+  let cur = { ...sorted[0], related_lines: [...sorted[0].related_lines] };
+
+  for (let i = 1; i < sorted.length; i++) {
+    const g = sorted[i];
+    if (g.primary_line - cur.primary_line <= maxGap) {
+      const betterPrimary =
+        scorePrimaryCandidate(g.primary_message) >
+        scorePrimaryCandidate(cur.primary_message);
+      if (betterPrimary) {
+        cur.related_lines.push({
+          line_number: cur.primary_line,
+          message: cur.primary_message,
+          role: "root",
+        });
+        cur = {
+          ...g,
+          id: cur.id,
+          related_lines: [...cur.related_lines, ...g.related_lines],
+        };
+      } else {
+        cur.related_lines.push(
+          {
+            line_number: g.primary_line,
+            message: g.primary_message,
+            role: "root",
+          },
+          ...g.related_lines
+        );
+      }
+    } else {
+      out.push(cur);
+      cur = { ...g, related_lines: [...g.related_lines] };
+    }
+  }
+  out.push(cur);
+  return out.map((g, i) => ({ ...g, id: `rc-${i + 1}` }));
 }
 
 /** Map groups to primary-only LogError list for backward compatibility. */

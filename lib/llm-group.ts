@@ -6,11 +6,28 @@ import type { RootCauseGroup } from "./types";
 
 const NVIDIA_BASE = "https://integrate.api.nvidia.com/v1";
 const OPENAI_BASE = "https://api.openai.com/v1";
+const LLM_TIMEOUT_MS = 28_000;
 
 function pickProvider(): "nvidia" | "openai" | null {
   if (process.env.NVIDIA_API_KEY?.trim()) return "nvidia";
   if (process.env.OPENAI_API_KEY?.trim()) return "openai";
   return null;
+}
+
+function parseLlmJson(raw: string): {
+  narrative?: string;
+  root_causes?: Array<Record<string, unknown>>;
+} {
+  let text = raw.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) text = text.slice(start, end + 1);
+  return JSON.parse(text) as {
+    narrative?: string;
+    root_causes?: Array<Record<string, unknown>>;
+  };
 }
 
 async function chatJson(
@@ -28,22 +45,27 @@ async function chatJson(
       ? process.env.NVIDIA_MODEL?.trim() || "meta/llama-3.1-70b-instruct"
       : process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
 
+  const body: Record<string, unknown> = {
+    model,
+    temperature: 0.2,
+    max_tokens: 2048,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+  };
+  if (provider === "openai") {
+    body.response_format = { type: "json_object" };
+  }
+
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      temperature: 0.2,
-      max_tokens: 2048,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -53,7 +75,9 @@ async function chatJson(
   const data = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
   };
-  return data.choices?.[0]?.message?.content?.trim() ?? "";
+  const content = data.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!content) throw new Error("LLM returned empty content");
+  return content;
 }
 
 export interface LlmGroupResult {
@@ -67,25 +91,12 @@ export async function refineRootCausesWithLlm(
   ruleGroups: RootCauseGroup[]
 ): Promise<LlmGroupResult | null> {
   const provider = pickProvider();
-  if (!provider || ruleGroups.length === 0) return null;
+  if (!provider) return null;
+  if (ruleGroups.length === 0) return null;
 
   const system = `You are ARVIL, a CI log triage assistant for ROCm/TheRock.
-Given rule-based root cause groups and log excerpt, return JSON only:
-{
-  "narrative": "2-4 sentences for engineers",
-  "root_causes": [
-    {
-      "id": "rc-1",
-      "primary_line": 158,
-      "primary_message": "...",
-      "severity": "HIGH",
-      "category": "Configuration",
-      "recommendation": "...",
-      "one_line_summary": "...",
-      "related_lines": [{"line_number": 157, "message": "...", "role": "stack"|"wrapper"}]
-    }
-  ]
-}
+Return a single JSON object only (no markdown), shape:
+{"narrative":"2-4 sentences","root_causes":[{"id":"rc-1","primary_line":158,"primary_message":"full log line","severity":"HIGH","category":"Configuration","recommendation":"action","one_line_summary":"short title","related_lines":[{"line_number":157,"message":"...","role":"stack"}]}]}
 Merge duplicate causes. Do not treat ##[error] exit code lines as separate root causes.`;
 
   const user = JSON.stringify({
@@ -94,15 +105,7 @@ Merge duplicate causes. Do not treat ##[error] exit code lines as separate root 
   });
 
   const raw = await chatJson(provider, system, user);
-  let parsed: {
-    narrative?: string;
-    root_causes?: Array<Record<string, unknown>>;
-  };
-  try {
-    parsed = JSON.parse(raw) as typeof parsed;
-  } catch {
-    throw new Error("LLM returned non-JSON response");
-  }
+  const parsed = parseLlmJson(raw);
 
   const merged: RootCauseGroup[] = (parsed.root_causes ?? []).map((rc, i) => ({
     id: String(rc.id ?? `rc-${i + 1}`),
@@ -125,9 +128,11 @@ Merge duplicate causes. Do not treat ##[error] exit code lines as separate root 
       : ruleGroups[i]?.related_lines ?? [],
   }));
 
+  const valid = merged.filter((g) => g.primary_message.trim().length > 10);
+
   return {
-    groups: merged.length > 0 ? merged : ruleGroups,
-    narrative: String(parsed.narrative ?? ""),
+    groups: valid.length > 0 ? valid : ruleGroups,
+    narrative: String(parsed.narrative ?? "").trim(),
     provider,
   };
 }

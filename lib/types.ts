@@ -81,6 +81,9 @@ export interface AnalysisResult {
   analysis_mode?: "tool_rag" | "tool_rag_llm";
   llm_provider?: "none" | "nvidia" | "openai";
   deep_narrative?: string;
+  deep_status?: "ok" | "skipped" | "failed";
+  deep_message?: string;
+  analysis_focus?: { start_line: number; end_line: number };
 }
 
 export interface HistoryItem {

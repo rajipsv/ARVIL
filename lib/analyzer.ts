@@ -1,3 +1,4 @@
+import { extractFailureWindow } from "./failure-window";
 import { lookupKnownFailure } from "./knowledge";
 import { refineRootCausesWithLlm } from "./llm-group";
 import {
@@ -78,12 +79,20 @@ function grepKeyword(
   return hits;
 }
 
+function isGhaWrapperLine(text: string): boolean {
+  return (
+    GITHUB_ERROR.test(text) ||
+    /process completed with exit code [1-9]/i.test(text)
+  );
+}
+
 function grepGithubErrors(content: string, maxMatches: number) {
   const lines = content.split(/\r?\n/);
   const hits: { line: number; text: string }[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (!GITHUB_ERROR.test(lines[i]) && !/exit code [1-9]/.test(lines[i])) continue;
-    hits.push({ line: i + 1, text: lines[i].trim() });
+    const ln = lines[i];
+    if (!isGhaWrapperLine(ln)) continue;
+    hits.push({ line: i + 1, text: ln.trim() });
     if (hits.length >= maxMatches) break;
   }
   return hits;
@@ -105,11 +114,13 @@ function buildErrors(
   hits: { line: number; text: string; type: string }[]
 ): LogError[] {
   const errors: LogError[] = [];
-  const seen = new Set<string>();
+  const seenLines = new Set<number>();
+  const seenText = new Set<string>();
 
   for (const h of hits) {
-    if (seen.has(h.text)) continue;
-    seen.add(h.text);
+    if (seenLines.has(h.line) || seenText.has(h.text)) continue;
+    seenLines.add(h.line);
+    seenText.add(h.text);
     const matches = lookupKnownFailure(h.text, 1);
     const m0 = matches[0];
     errors.push({
@@ -145,21 +156,36 @@ function enrichGroupsWithKb(groups: RootCauseGroup[]): RootCauseGroup[] {
   });
 }
 
-function collectHits(trimmed: string): { line: number; text: string; type: string }[] {
+function collectHits(
+  trimmed: string,
+  lineOffset = 0
+): { line: number; text: string; type: string }[] {
   const hits: { line: number; text: string; type: string }[] = [];
+  const seenLines = new Set<number>();
+
+  const add = (h: { line: number; text: string }, type: string) => {
+    const line = h.line + lineOffset;
+    if (seenLines.has(line) || isGhaWrapperLine(h.text)) return;
+    seenLines.add(line);
+    hits.push({ line, text: h.text, type });
+  };
 
   for (const kw of ["ERROR", "CRITICAL", "FATAL"] as const) {
-    for (const h of grepKeyword(trimmed, kw, 25, 2)) {
-      hits.push({ ...h, type: kw });
+    for (const h of grepKeyword(trimmed, kw, 20, 1)) {
+      if (/CalledProcessError|subprocess\./i.test(h.text)) {
+        add(h, "CRITICAL");
+      } else {
+        add(h, kw);
+      }
     }
   }
 
-  for (const h of grepGithubErrors(trimmed, 15)) {
-    hits.push({ ...h, type: "ERROR" });
+  for (const h of grepSubprocessFailures(trimmed, 15)) {
+    add(h, "CRITICAL");
   }
 
-  for (const h of grepSubprocessFailures(trimmed, 20)) {
-    hits.push({ ...h, type: "CRITICAL" });
+  for (const h of grepGithubErrors(trimmed, 5)) {
+    add(h, "ERROR");
   }
 
   return hits;
@@ -177,7 +203,10 @@ export function analyzeLog(
       : content;
 
   const stats = getLogStats(trimmed);
-  const lineErrors = buildErrors(collectHits(trimmed));
+  const fw = extractFailureWindow(trimmed);
+  const lineErrors = buildErrors(
+    collectHits(fw.text, fw.startLine - 1)
+  );
   const root_causes = enrichGroupsWithKb(groupRootCauses(lineErrors));
   const errors = rootCausesToErrors(root_causes);
 
@@ -188,7 +217,10 @@ export function analyzeLog(
   }));
 
   const wf = WORKFLOW_HINTS[workflow];
-  const summary = buildSummaryFromGroups(root_causes, stats.lines, wf.label);
+  let summary = buildSummaryFromGroups(root_causes, stats.lines, wf.label);
+  if (fw.focused) {
+    summary += ` Focused on lines ${fw.startLine}–${fw.endLine} (last failure region).`;
+  }
 
   return {
     timestamp: new Date().toISOString(),
@@ -204,6 +236,9 @@ export function analyzeLog(
     stats,
     analysis_mode: "tool_rag",
     llm_provider: "none",
+    analysis_focus: fw.focused
+      ? { start_line: fw.startLine, end_line: fw.endLine }
+      : undefined,
   };
 }
 
@@ -213,25 +248,34 @@ export async function analyzeLogDeep(
   sourceLabel = "pasted-log"
 ): Promise<AnalysisResult> {
   const base = analyzeLog(content, workflow, sourceLabel);
-  const snippet = content.slice(0, 50_000);
+  const fw = extractFailureWindow(content);
+  const snippet = fw.text.slice(0, 24_000);
 
   try {
     const llm = await refineRootCausesWithLlm(snippet, base.root_causes);
     if (!llm) {
       return {
         ...base,
-        summary:
-          base.summary +
-          " Deep analyze skipped (set NVIDIA_API_KEY or OPENAI_API_KEY on Vercel).",
+        mode: "arvil_web_tool_rag",
+        analysis_mode: "tool_rag",
+        deep_status: "skipped",
+        deep_message:
+          "Deep analyze needs NVIDIA_API_KEY or OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables.",
       };
     }
 
-    const root_causes = enrichGroupsWithKb(llm.groups);
+    const validGroups = llm.groups.filter((g) => g.primary_message?.trim());
+    const root_causes = enrichGroupsWithKb(
+      validGroups.length > 0 ? validGroups : base.root_causes
+    );
     const errors = rootCausesToErrors(root_causes);
     const wf = WORKFLOW_HINTS[workflow];
+    const narrative =
+      llm.narrative?.trim() ||
+      "LLM refined root causes (no narrative returned).";
     const summary = [
       buildSummaryFromGroups(root_causes, base.line_count, wf.label),
-      llm.narrative,
+      narrative,
     ]
       .filter(Boolean)
       .join(" ");
@@ -245,13 +289,17 @@ export async function analyzeLogDeep(
       errors_count: root_causes.length,
       analysis_mode: "tool_rag_llm",
       llm_provider: llm.provider,
-      deep_narrative: llm.narrative,
+      deep_status: "ok",
+      deep_narrative: narrative,
+      deep_message: narrative,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "LLM failed";
     return {
       ...base,
-      summary: `${base.summary} Deep analyze failed: ${msg}`,
+      deep_status: "failed",
+      deep_message: msg,
+      deep_narrative: undefined,
     };
   }
 }
