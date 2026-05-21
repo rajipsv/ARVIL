@@ -106,10 +106,25 @@ class ARVILAgent:
         return create_log_tools(session) + create_rag_tools(self.kb)
 
     def _build_graph(self, tools: list):
-        api_key = os.getenv("OPENAI_API_KEY")
+        """Prefer NVIDIA NIM (OpenAI-compatible), then OpenAI."""
+        nvidia_key = os.getenv("NVIDIA_API_KEY")
+        openai_key = os.getenv("OPENAI_API_KEY")
+        api_key = nvidia_key or openai_key
         if not api_key:
             return None
-        llm = ChatOpenAI(model=self.model_name, temperature=0, api_key=api_key)
+
+        kwargs: dict = {"model": self.model_name, "temperature": 0, "api_key": api_key}
+        if nvidia_key:
+            kwargs["base_url"] = os.getenv(
+                "NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1"
+            )
+            kwargs["model"] = os.getenv(
+                "NVIDIA_MODEL", "meta/llama-3.1-70b-instruct"
+            )
+        elif os.getenv("OPENAI_API_KEY"):
+            kwargs["model"] = self.model_name
+
+        llm = ChatOpenAI(**kwargs)
         return create_react_agent(
             llm,
             tools,
@@ -129,8 +144,9 @@ class ARVILAgent:
         session = LogSession(path=path)
         timestamp = datetime.now().isoformat()
 
-        if not use_llm or not os.getenv("OPENAI_API_KEY"):
-            print("[INFO] Running tool-only mode (no OPENAI_API_KEY or --tool-only flag).")
+        has_llm = os.getenv("NVIDIA_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if not use_llm or not has_llm:
+            print("[INFO] Running tool-only mode (no LLM API key or --tool-only flag).")
             tool_data = run_tool_only_analysis(session, kb=self.kb)
             return {
                 "file": str(path),

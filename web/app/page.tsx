@@ -20,17 +20,45 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [polledRuns, setPolledRuns] = useState<Array<Record<string, unknown>>>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadHistory = useCallback(async () => {
     try {
       const res = await fetch("/api/history");
       const data = await res.json();
-      if (res.ok && data.items) setHistory(data.items);
+      if (res.ok) {
+        if (data.items) setHistory(data.items);
+        if (data.polledRuns) setPolledRuns(data.polledRuns);
+      }
     } catch {
       /* Neon optional */
     }
   }, []);
+
+  const syncTheRock = useCallback(async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/sync", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Sync failed");
+      setSyncMsg(
+        `Synced ${data.runs_ingested ?? 0} runs, ${data.artifacts_created ?? 0} logs, ${data.analyses_created ?? 0} analyses`
+      );
+      if (data.errors?.length) {
+        setSyncMsg((m) => `${m} (${data.errors.length} warnings)`);
+      }
+      loadHistory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }, [loadHistory]);
 
   useEffect(() => {
     loadHistory();
@@ -147,6 +175,21 @@ export default function Home() {
           </select>
           <p className="text-xs text-arvil-muted">{hint.hint}</p>
 
+          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-2">
+            <p className="text-xs font-medium text-arvil-muted">
+              TheRock poll (primary) — needs GITHUB_TOKEN on server
+            </p>
+            <button
+              type="button"
+              onClick={syncTheRock}
+              disabled={syncing || loading}
+              className="w-full py-2 rounded-lg border border-arvil-accent text-arvil-accent text-sm font-medium hover:bg-arvil-accent hover:text-white disabled:opacity-50 transition"
+            >
+              {syncing ? "Syncing failed runs..." : "Sync now from TheRock Actions"}
+            </button>
+            {syncMsg && <p className="text-xs text-green-400">{syncMsg}</p>}
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -197,6 +240,30 @@ export default function Home() {
             <p className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded-lg p-3">
               {error}
             </p>
+          )}
+
+          {polledRuns.length > 0 && (
+            <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 max-h-36 overflow-y-auto">
+              <p className="text-xs font-medium text-arvil-muted mb-2">
+                Polled failed runs (TheRock)
+              </p>
+              <ul className="space-y-1">
+                {polledRuns.slice(0, 6).map((r) => (
+                  <li key={String(r.run_id)} className="text-xs text-gray-400">
+                    <a
+                      href={String(r.html_url ?? "#")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-orange-400 hover:underline"
+                    >
+                      {String(r.workflow_name ?? "run")} #{String(r.github_run_id)}
+                    </a>
+                    {" — "}
+                    {String(r.analyses ?? 0)} analyses
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
 
           {history.length > 0 && (

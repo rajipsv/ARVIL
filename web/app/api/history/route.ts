@@ -1,4 +1,4 @@
-import { getAnalysisById, listRecentAnalyses } from "@/lib/db";
+import { getAnalysisById, listPolledRuns, listRecentAnalyses } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -14,8 +14,11 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json(row);
     }
-    const items = await listRecentAnalyses(25);
-    return NextResponse.json({ items });
+    const [items, polledRuns] = await Promise.all([
+      listRecentAnalyses(25),
+      listPolledRuns(15),
+    ]);
+    return NextResponse.json({ items, polledRuns });
   } catch (e) {
     console.error(e);
     return NextResponse.json(

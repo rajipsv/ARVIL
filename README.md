@@ -1,66 +1,90 @@
 # ARVIL
 
-**AI log qualification** for [TheRock](https://github.com/ROCm/TheRock) / ROCm CI — LangGraph agent, RAG knowledge base, web UI on Vercel, history in [Neon](https://neon.tech).
+**AI log qualification** for [TheRock](https://github.com/ROCm/TheRock) / ROCm CI — agentic tools, RAG knowledge base, Neon Postgres, Vercel web UI.
 
-Repository: https://github.com/rajipsv/ARVIL
+https://github.com/rajipsv/ARVIL
 
-## Structure (no `langgraph` folder name)
+## Structure
 
 ```
 ARVIL/
-  python/
-    agentic/       # Phase 1–2: ReAct agent + RAG tools
-    workflow/      # Multi-stage workflow analyzer + MCP stub
-    simple/        # LangChain single-chain analyzer
-  web/             # Next.js UI (Vercel)
-  scripts/         # Neon SQL schema
+  python/agentic/     LangGraph ReAct + RAG (Phase 1–2)
+  python/workflow/    Multi-stage workflow analyzer
+  web/                Next.js UI (deploy root on Vercel)
+  scripts/            schema.sql (v1), schema_v2.sql (TheRock stream)
+  .github/workflows/  poll-therock.yml (scheduled sync — no Vercel Cron)
 ```
 
-## Web UI (Vercel + Neon)
+## Quick start (web)
 
 ```bash
 cd web
-cp .env.example .env.local   # set DATABASE_URL
+cp .env.example .env.local
+# Set DATABASE_URL, GITHUB_TOKEN (for Sync now)
 npm install
 npm run dev
 ```
 
-Deploy on Vercel with **Root Directory** = `web`. Add env var `DATABASE_URL` (Neon connection string).
+Open http://localhost:3000 → **Sync now from TheRock Actions** or paste a log manually.
 
-### TheRock workflow
+## Database schema v2
 
-1. Open [TheRock Actions](https://github.com/ROCm/TheRock/actions)
-2. Failed job → Download log
-3. Paste/upload in ARVIL web → **Analyze**
-4. Results saved to Neon `log_analyses` table
+Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let the app auto-create on first request.
 
-## Python CLI (full agent)
+| Table | Purpose |
+|-------|---------|
+| `ci_workflows` | TheRock workflow names (seeded) |
+| `ci_runs` | One row per GitHub Actions run |
+| `log_artifacts` | Job logs (poll or manual) |
+| `log_chunks` | Large log windows |
+| `log_analyses` | ARVIL triage JSON |
+| `analysis_errors` | Normalized errors + KB links |
+
+## TheRock poll (primary ingestion)
+
+**Vercel Hobby does not support Cron.** Use:
+
+1. **Sync now** button → `POST /api/sync`
+2. **GitHub Actions** [poll-therock.yml](.github/workflows/poll-therock.yml) every 30 minutes
+
+### Vercel environment variables
+
+| Variable | Required |
+|----------|----------|
+| `DATABASE_URL` | Yes |
+| `GITHUB_TOKEN` | Yes for poll (read Actions on public repos) |
+| `GITHUB_REPO` | `ROCm/TheRock` |
+| `POLL_CRON_SECRET` | Recommended |
+
+### GitHub repo secrets (for scheduled poll)
+
+| Secret | Example |
+|--------|---------|
+| `ARVIL_SYNC_URL` | `https://your-app.vercel.app/api/sync` |
+| `POLL_CRON_SECRET` | Same as Vercel |
+
+## Python CLI
 
 ```bash
 cd python
 pip install -r requirements.txt
 python -m agentic workflow/example.log --tool-only
-python -m agentic workflow/example.log   # needs OPENAI_API_KEY
+# With NVIDIA NIM:
+# set NVIDIA_API_KEY in .env
+python -m agentic workflow/example.log
 ```
 
-See [python/agentic/AGENTIC_QUICKSTART.md](python/agentic/AGENTIC_QUICKSTART.md).
+## LLM providers
 
-## Neon database
-
-Run once in [Neon SQL Editor](https://console.neon.tech): [scripts/schema.sql](scripts/schema.sql)
-
-Or let the app auto-create tables on first analyze.
-
-| Column | Purpose |
-|--------|---------|
-| `log_preview` | Truncated log text |
-| `result_json` | Full ARVIL analysis JSON |
-| `workflow` | TheRock preset id |
+| Provider | Env | Used by |
+|----------|-----|---------|
+| None | — | Web UI tool+RAG, `--tool-only` |
+| NVIDIA NIM | `NVIDIA_API_KEY` | Python ReAct agent |
+| OpenAI | `OPENAI_API_KEY` | Fallback for Python agent |
 
 ## Security
 
-- Never commit `.env.local` or database passwords.
-- If a connection string was shared in chat, **rotate the Neon password** in the Neon console.
+Never commit `.env.local`. Rotate any credentials shared in chat.
 
 ## License
 

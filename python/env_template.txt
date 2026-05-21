@@ -1,0 +1,6 @@
+# Copy to python/.env for CLI agent
+NVIDIA_API_KEY=
+NVIDIA_API_BASE=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=meta/llama-3.1-70b-instruct
+OPENAI_API_KEY=
+ARVIL_DISABLE_EMBEDDINGS=1

@@ -1,0 +1,28 @@
+# Poll failed TheRock CI runs into ARVIL (free alternative to Vercel Cron)
+name: Poll TheRock CI
+
+on:
+  schedule:
+    # Every 30 minutes (GitHub Actions UTC)
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call ARVIL sync endpoint
+        env:
+          ARVIL_SYNC_URL: ${{ secrets.ARVIL_SYNC_URL }}
+          POLL_CRON_SECRET: ${{ secrets.POLL_CRON_SECRET }}
+        run: |
+          if [ -z "$ARVIL_SYNC_URL" ]; then
+            echo "Set repository secret ARVIL_SYNC_URL (e.g. https://your-app.vercel.app/api/sync)"
+            exit 1
+          fi
+          curl -sf -X POST "$ARVIL_SYNC_URL" \
+            -H "Authorization: Bearer ${POLL_CRON_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{"maxRuns":5}' \
+            | tee sync-result.json
+          echo "Sync completed"
