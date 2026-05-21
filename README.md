@@ -8,24 +8,22 @@ https://github.com/rajipsv/ARVIL
 
 ```
 ARVIL/
+  app/ lib/            Next.js UI (Vercel deploys repo root)
   python/agentic/     LangGraph ReAct + RAG (Phase 1–2)
   python/workflow/    Multi-stage workflow analyzer
-  web/                Next.js UI (deploy root on Vercel)
   scripts/            schema.sql (v1), schema_v2.sql (TheRock stream)
   .github/workflows/  poll-therock.yml (scheduled sync — no Vercel Cron)
 ```
 
 ## Deploy on Vercel
 
-**Root Directory must be `web`** (set in the Vercel UI only — not in `vercel.json`).
+Import **rajipsv/ARVIL** with default settings (Root Directory = **empty** / repo root). Vercel should detect **Next.js** and run `npm run build`.
 
-1. Vercel → Project → **Settings** → **General** → **Root Directory** → type **`web`** → Save  
-2. **Redeploy** — build log should show `npm install` and `next build` (not “no frameworks detected” in 49ms)
+If you previously set Root Directory to `web`, clear it: **Settings → General → Root Directory** → leave blank → Save → **Redeploy**.
 
-## Quick start (web)
+## Quick start (web UI)
 
 ```bash
-cd web
 cp .env.example .env.local
 # Set DATABASE_URL, GITHUB_TOKEN (for Sync now)
 npm install
