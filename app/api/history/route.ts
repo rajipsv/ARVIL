@@ -1,5 +1,14 @@
 import { getAnalysisById, listPolledRuns, listRecentAnalyses } from "@/lib/db";
+import type { WorkflowPreset } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
+
+const VALID_WORKFLOWS: WorkflowPreset[] = [
+  "therock_multi_arch",
+  "therock_install",
+  "therock_pytorch",
+  "therock_unit_tests",
+  "custom",
+];
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,11 +23,24 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json(row);
     }
-    const [items, polledRuns] = await Promise.all([
-      listRecentAnalyses(25),
-      listPolledRuns(15),
+    const workflowParam = req.nextUrl.searchParams.get("workflow");
+    const preset = VALID_WORKFLOWS.includes(workflowParam as WorkflowPreset)
+      ? (workflowParam as WorkflowPreset)
+      : undefined;
+
+    const [allItems, polledRuns] = await Promise.all([
+      listRecentAnalyses(40),
+      listPolledRuns(10, preset),
     ]);
-    return NextResponse.json({ items, polledRuns });
+
+    const items =
+      preset && preset !== "custom"
+        ? allItems.filter((h) => h.workflow === preset)
+        : preset === "custom"
+          ? allItems.slice(0, 25)
+          : [];
+
+    return NextResponse.json({ items, polledRuns, workflow: preset ?? null });
   } catch (e) {
     console.error(e);
     return NextResponse.json(

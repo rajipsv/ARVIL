@@ -74,6 +74,7 @@ export interface SyncedLogArtifact {
   github_run_id: number | null;
   html_url: string | null;
   workflow_name: string | null;
+  workflow_preset: string | null;
   job_name: string | null;
   ingestion_source: string;
   line_count: number;

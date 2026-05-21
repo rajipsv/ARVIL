@@ -1,5 +1,6 @@
 import { neon } from "@neondatabase/serverless";
-import type { AnalysisResult } from "./types";
+import type { AnalysisResult, WorkflowPreset } from "./types";
+import { presetMatchesWorkflowName } from "./workflow-map";
 
 let _sql: ReturnType<typeof neon> | null = null;
 
@@ -37,8 +38,12 @@ export async function ensureSchemaV2() {
       github_run_id BIGINT NOT NULL UNIQUE,
       event TEXT, branch TEXT, head_sha TEXT, status TEXT, conclusion TEXT,
       run_started_at TIMESTAMPTZ, html_url TEXT,
-      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      workflow_preset TEXT
     )
+  `;
+  await sql`
+    ALTER TABLE ci_runs ADD COLUMN IF NOT EXISTS workflow_preset TEXT
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS log_artifacts (
@@ -118,6 +123,7 @@ export async function getKnownGithubRunIds(limit = 500): Promise<number[]> {
 export async function upsertCiRun(data: {
   github_repo: string;
   workflow_name: string;
+  workflow_preset?: WorkflowPreset;
   github_run_id: number;
   event?: string;
   branch?: string;
@@ -150,16 +156,18 @@ export async function upsertCiRun(data: {
   const runRows = (await sql`
     INSERT INTO ci_runs (
       workflow_id, github_run_id, event, branch, head_sha,
-      status, conclusion, run_started_at, html_url
+      status, conclusion, run_started_at, html_url, workflow_preset
     ) VALUES (
       ${wfId}::uuid, ${data.github_run_id}, ${data.event ?? null},
       ${data.branch ?? null}, ${data.head_sha ?? null},
       ${data.status ?? null}, ${data.conclusion ?? null},
-      ${data.run_started_at ?? null}, ${data.html_url ?? null}
+      ${data.run_started_at ?? null}, ${data.html_url ?? null},
+      ${data.workflow_preset ?? null}
     )
     ON CONFLICT (github_run_id) DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
+      workflow_preset = COALESCE(EXCLUDED.workflow_preset, ci_runs.workflow_preset),
       synced_at = NOW()
     RETURNING id::text
   `) as { id: string }[];
@@ -309,14 +317,14 @@ export async function listRecentAnalyses(limit = 20) {
   return rows;
 }
 
-export async function listPolledRuns(limit = 15) {
+export async function listPolledRuns(limit = 15, preset?: WorkflowPreset) {
   const sql = getDb();
   if (!sql) return [];
   await ensureSchemaV2();
 
   const rows = (await sql`
     SELECT r.id::text AS run_id, r.github_run_id, r.html_url, r.branch,
-           r.run_started_at, r.conclusion, w.workflow_name,
+           r.run_started_at, r.conclusion, r.workflow_preset, w.workflow_name,
            COUNT(DISTINCT a.id)::int AS artifacts,
            COUNT(DISTINCT la.id)::int AS analyses
     FROM ci_runs r
@@ -325,12 +333,23 @@ export async function listPolledRuns(limit = 15) {
     LEFT JOIN log_analyses la ON la.artifact_id = a.id
     WHERE r.conclusion = 'failure'
     GROUP BY r.id, r.github_run_id, r.html_url, r.branch, r.run_started_at,
-             r.conclusion, w.workflow_name
+             r.conclusion, r.workflow_preset, w.workflow_name
     ORDER BY r.run_started_at DESC NULLS LAST
-    LIMIT ${limit}
+    LIMIT ${preset && preset !== "custom" ? limit * 3 : limit}
   `) as Array<Record<string, unknown>>;
 
-  return rows;
+  if (!preset || preset === "custom") {
+    return rows.slice(0, limit);
+  }
+
+  return rows
+    .filter((row) => {
+      const stored = row.workflow_preset as string | null;
+      if (stored === preset) return true;
+      if (stored && stored !== preset) return false;
+      return presetMatchesWorkflowName(preset, String(row.workflow_name ?? ""));
+    })
+    .slice(0, limit);
 }
 
 export async function getAnalysisById(id: string) {
@@ -346,10 +365,15 @@ export async function getAnalysisById(id: string) {
   return rows[0] ?? null;
 }
 
-export async function listIngestedArtifacts(limit = 40) {
+export async function listIngestedArtifacts(
+  limit = 40,
+  preset?: WorkflowPreset
+) {
   const sql = getDb();
   if (!sql) return [];
   await ensureSchemaV2();
+
+  const fetchLimit = preset && preset !== "custom" ? limit * 3 : limit;
 
   const rows = (await sql`
     SELECT
@@ -357,6 +381,7 @@ export async function listIngestedArtifacts(limit = 40) {
       r.id::text AS run_id,
       r.github_run_id,
       r.html_url,
+      r.workflow_preset,
       w.workflow_name,
       a.job_name,
       a.ingestion_source,
@@ -379,13 +404,29 @@ export async function listIngestedArtifacts(limit = 40) {
         ORDER BY la.created_at DESC LIMIT 1
       ) AS summary
     FROM log_artifacts a
-    LEFT JOIN ci_runs r ON r.id = a.run_id
+    INNER JOIN ci_runs r ON r.id = a.run_id
     LEFT JOIN ci_workflows w ON w.id = r.workflow_id
+    WHERE a.ingestion_source = 'poll'
     ORDER BY a.created_at DESC
-    LIMIT ${limit}
+    LIMIT ${fetchLimit}
   `) as Array<Record<string, unknown>>;
 
-  return rows;
+  if (!preset || preset === "custom") {
+    return rows.slice(0, limit);
+  }
+
+  const filtered = rows.filter((row) => {
+    const stored = row.workflow_preset as string | null;
+    if (stored === preset) return true;
+    if (stored && stored !== preset) return false;
+    return presetMatchesWorkflowName(
+      preset,
+      String(row.workflow_name ?? ""),
+      String(row.job_name ?? "")
+    );
+  });
+
+  return filtered.slice(0, limit);
 }
 
 export async function getArtifactLogText(artifactId: string): Promise<string | null> {

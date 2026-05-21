@@ -7,14 +7,8 @@ import type {
   SyncedLogArtifact,
   WorkflowPreset,
 } from "@/lib/types";
-import {
-  PRESET_LABELS,
-  presetMatchesWorkflowName,
-  workflowNameToPreset,
-} from "@/lib/workflow-map";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const WORKFLOWS = Object.keys(WORKFLOW_HINTS) as WorkflowPreset[];
+import { CATEGORY_PRESETS, PRESET_LABELS } from "@/lib/workflow-map";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const SAMPLE_LOG = `2024-12-10 10:15:25 ERROR [Database] Connection failed: Connection timeout after 30s
 2024-12-10 10:22:00 FATAL [Application] Out of memory error - shutting down
@@ -30,7 +24,6 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [polledRuns, setPolledRuns] = useState<Array<Record<string, unknown>>>([]);
   const [syncedLogs, setSyncedLogs] = useState<SyncedLogArtifact[]>([]);
   const [selectedArtifactId, setSelectedArtifactId] = useState("");
   const [loadingArtifact, setLoadingArtifact] = useState(false);
@@ -38,25 +31,41 @@ export default function Home() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const loadHistory = useCallback(async () => {
+  const loadCategoryData = useCallback(async () => {
+    setSyncedLogs([]);
     try {
+      const q = encodeURIComponent(workflow);
       const [histRes, artRes] = await Promise.all([
-        fetch("/api/history"),
-        fetch(`/api/artifacts?workflow=${encodeURIComponent(workflow)}`),
+        fetch(`/api/history?workflow=${q}`),
+        fetch(`/api/artifacts?workflow=${q}`),
       ]);
       const histData = await histRes.json();
       if (histRes.ok) {
-        if (histData.items) setHistory(histData.items);
-        if (histData.polledRuns) setPolledRuns(histData.polledRuns);
+        setHistory(histData.items ?? []);
+      } else {
+        setHistory([]);
       }
       const artData = await artRes.json();
-      if (artRes.ok && artData.artifacts) {
+      if (artRes.ok && Array.isArray(artData.artifacts)) {
         setSyncedLogs(artData.artifacts as SyncedLogArtifact[]);
+      } else {
+        setSyncedLogs([]);
       }
     } catch {
-      /* Neon optional */
+      setSyncedLogs([]);
+      setHistory([]);
     }
   }, [workflow]);
+
+  useEffect(() => {
+    if (
+      selectedArtifactId &&
+      !syncedLogs.some((a) => a.artifact_id === selectedArtifactId)
+    ) {
+      setSelectedArtifactId("");
+      setResult(null);
+    }
+  }, [workflow, syncedLogs, selectedArtifactId]);
 
   const syncTheRock = useCallback(async () => {
     setSyncing(true);
@@ -90,17 +99,26 @@ export default function Home() {
       if (data.errors?.length) {
         setSyncMsg((m) => `${m}. ${data.errors.slice(0, 2).join("; ")}`);
       }
-      loadHistory();
+      loadCategoryData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
     } finally {
       setSyncing(false);
     }
-  }, [loadHistory, workflow]);
+  }, [loadCategoryData, workflow]);
 
   useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+    loadCategoryData();
+  }, [loadCategoryData]);
+
+  const selectCategory = (preset: WorkflowPreset) => {
+    setWorkflow(preset);
+    setSelectedArtifactId("");
+    setSyncMsg(null);
+    setResult(null);
+    setLogContent("");
+    setFileName(null);
+  };
 
   const onFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -130,8 +148,6 @@ export default function Home() {
 
         setSelectedArtifactId(artifactId);
         setLogContent(detail.log_text ?? "");
-        const wfName = String(detail.workflow_name ?? "");
-        if (wfName) setWorkflow(workflowNameToPreset(wfName));
         setFileName(
           `run-${detail.github_run_id ?? "?"} — ${detail.job_name ?? "job"}`
         );
@@ -186,14 +202,14 @@ export default function Home() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Request failed");
         setResult(data);
-        loadHistory();
+        loadCategoryData();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Analysis failed");
       } finally {
         setLoading(false);
       }
     },
-    [logContent, workflow, fileName, selectedArtifactId, loadHistory]
+    [logContent, workflow, fileName, selectedArtifactId, loadCategoryData]
   );
 
   const downloadJson = () => {
@@ -208,27 +224,7 @@ export default function Home() {
   };
 
   const hint = WORKFLOW_HINTS[workflow];
-
-  const filteredSyncedLogs = useMemo(() => {
-    if (workflow === "custom") return syncedLogs;
-    return syncedLogs.filter((a) =>
-      presetMatchesWorkflowName(
-        workflow,
-        a.workflow_name ?? "",
-        a.job_name ?? ""
-      )
-    );
-  }, [syncedLogs, workflow]);
-
-  useEffect(() => {
-    if (
-      selectedArtifactId &&
-      !filteredSyncedLogs.some((a) => a.artifact_id === selectedArtifactId)
-    ) {
-      setSelectedArtifactId("");
-      setResult(null);
-    }
-  }, [workflow, filteredSyncedLogs, selectedArtifactId]);
+  const categoryLabel = PRESET_LABELS[workflow];
 
   return (
     <main className="min-h-screen">
@@ -266,141 +262,151 @@ export default function Home() {
       </header>
 
       <div className="max-w-6xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-8">
-        <section className="space-y-4">
-          <label className="block text-sm font-medium text-arvil-muted">
-            TheRock workflow category
-          </label>
-          <select
-            value={workflow}
-            onChange={(e) => {
-              setWorkflow(e.target.value as WorkflowPreset);
-              setSelectedArtifactId("");
-              setSyncMsg(null);
-            }}
-            className="w-full bg-arvil-panel border border-arvil-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arvil-accent"
-          >
-            {WORKFLOWS.map((w) => (
-              <option key={w} value={w}>
-                {WORKFLOW_HINTS[w].label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-arvil-muted">
-            {hint.hint} Sync and log list filter to this category.
-          </p>
+        <section className="space-y-5">
+          <div>
+            <p className="text-sm font-medium text-arvil-muted mb-2">
+              1. Choose TheRock category
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {CATEGORY_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => selectCategory(preset)}
+                  className={`px-3 py-2.5 rounded-lg text-left text-sm border transition ${
+                    workflow === preset
+                      ? "border-arvil-accent bg-orange-950/40 text-orange-200"
+                      : "border-arvil-border bg-arvil-panel text-gray-300 hover:border-arvil-accent/60"
+                  }`}
+                >
+                  <span className="font-medium block">{PRESET_LABELS[preset]}</span>
+                  <span className="text-xs text-arvil-muted block mt-0.5">
+                    {WORKFLOW_HINTS[preset].label.split("—")[1]?.trim() ??
+                      WORKFLOW_HINTS[preset].label}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-arvil-muted mt-2">{hint.hint}</p>
+          </div>
 
-          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-2">
-            <p className="text-xs font-medium text-arvil-muted">
-              Sync failed runs — category: {PRESET_LABELS[workflow]}
+          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-4 space-y-2">
+            <p className="text-sm font-medium">
+              2. Sync failed <span className="text-arvil-accent">{categoryLabel}</span> runs
             </p>
             <button
               type="button"
               onClick={syncTheRock}
               disabled={syncing || loading}
-              className="w-full py-2 rounded-lg border border-arvil-accent text-arvil-accent text-sm font-medium hover:bg-arvil-accent hover:text-white disabled:opacity-50 transition"
+              className="w-full py-2.5 rounded-lg bg-arvil-accent text-white text-sm font-semibold hover:bg-orange-600 disabled:opacity-50 transition"
             >
-              {syncing
-                ? `Syncing ${PRESET_LABELS[workflow]}…`
-                : `Sync failed ${PRESET_LABELS[workflow]} runs`}
+              {syncing ? `Syncing ${categoryLabel}…` : `Sync ${categoryLabel} from GitHub`}
             </button>
             {syncMsg && <p className="text-xs text-green-400">{syncMsg}</p>}
           </div>
 
-          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-3">
-            <p className="text-xs font-medium text-arvil-muted">
-              Synced logs — {PRESET_LABELS[workflow]} ({filteredSyncedLogs.length})
-            </p>
-            {filteredSyncedLogs.length === 0 ? (
-              <p className="text-xs text-gray-500">
-                No logs for {PRESET_LABELS[workflow]}. Click &quot;Sync failed{" "}
-                {PRESET_LABELS[workflow]} runs&quot; above, or choose &quot;All
-                workflows&quot;.
+          <div className="rounded-lg border border-arvil-border bg-arvil-panel p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                3. {categoryLabel} logs
+                <span className="text-arvil-muted font-normal ml-1">
+                  ({syncedLogs.length})
+                </span>
               </p>
+            </div>
+
+            {syncedLogs.length === 0 ? (
+              <div className="text-center py-8 px-4 rounded-lg border border-dashed border-arvil-border">
+                <p className="text-sm text-gray-400">
+                  No <strong className="text-orange-300">{categoryLabel}</strong> logs
+                  in Neon yet.
+                </p>
+                <p className="text-xs text-arvil-muted mt-2">
+                  Sync this category above. Only {categoryLabel} failures are stored
+                  and listed here.
+                </p>
+              </div>
             ) : (
-              <>
-                <select
-                  value={selectedArtifactId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setSelectedArtifactId(id);
-                    if (id) loadSelectedArtifact(id);
-                  }}
-                  disabled={loadingArtifact || loading}
-                  className="w-full bg-arvil-bg border border-arvil-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arvil-accent"
-                >
-                  <option value="">
-                    — Select {PRESET_LABELS[workflow]} job log —
-                  </option>
-                  {filteredSyncedLogs.map((a) => (
-                    <option key={a.artifact_id} value={a.artifact_id}>
-                      #{a.github_run_id ?? "?"} · {a.job_name ?? "job"} ·{" "}
-                      {a.workflow_name ?? "workflow"}
-                      {a.errors_count != null ? ` · ${a.errors_count} err` : ""}
-                    </option>
-                  ))}
-                </select>
-                <ul className="max-h-28 overflow-y-auto space-y-1 border-t border-arvil-border pt-2">
-                  {filteredSyncedLogs.slice(0, 8).map((a) => (
+              <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {syncedLogs.map((a) => {
+                  const selected = selectedArtifactId === a.artifact_id;
+                  return (
                     <li key={a.artifact_id}>
                       <button
                         type="button"
                         onClick={() => loadSelectedArtifact(a.artifact_id)}
-                        className={`text-left text-xs w-full px-2 py-1 rounded hover:bg-arvil-bg ${
-                          selectedArtifactId === a.artifact_id
-                            ? "bg-arvil-bg text-orange-300"
-                            : "text-gray-400"
+                        className={`w-full text-left rounded-lg border px-3 py-2.5 transition ${
+                          selected
+                            ? "border-arvil-accent bg-orange-950/30"
+                            : "border-arvil-border bg-arvil-bg hover:border-arvil-accent/50"
                         }`}
                       >
-                        <span className="font-medium text-orange-400">
-                          #{String(a.github_run_id)}
-                        </span>{" "}
-                        {a.job_name} — {a.line_count.toLocaleString()} lines
-                        {a.summary ? (
-                          <span className="block truncate text-gray-500">
-                            {a.summary}
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className="text-xs font-mono text-orange-400">
+                            Run #{a.github_run_id}
                           </span>
-                        ) : null}
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-arvil-panel text-arvil-muted">
+                            {categoryLabel}
+                          </span>
+                          {a.errors_count != null && a.errors_count > 0 && (
+                            <span className="text-xs text-red-300">
+                              {a.errors_count} errors
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-200 truncate">
+                          {a.job_name ?? "Job log"}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          {a.line_count.toLocaleString()} lines ·{" "}
+                          {new Date(a.created_at).toLocaleString()}
+                        </p>
+                        {a.summary && (
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                            {a.summary}
+                          </p>
+                        )}
                       </button>
                     </li>
-                  ))}
-                </ul>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={!selectedArtifactId || loading || loadingArtifact}
-                    onClick={() =>
-                      loadSelectedArtifact(selectedArtifactId, { viewOnly: true })
-                    }
-                    className="px-3 py-1.5 rounded-lg border border-arvil-border text-xs hover:border-arvil-accent disabled:opacity-50"
-                  >
-                    View saved analysis
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!selectedArtifactId || loading || loadingArtifact}
-                    onClick={() => analyze()}
-                    className="px-3 py-1.5 rounded-lg border border-arvil-accent text-arvil-accent text-xs hover:bg-arvil-accent hover:text-white disabled:opacity-50"
-                  >
-                    Analyze selected
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!selectedArtifactId || loading || loadingArtifact}
-                    onClick={() => analyze({ reanalyze: true })}
-                    className="px-3 py-1.5 rounded-lg text-xs text-arvil-muted hover:text-white disabled:opacity-50"
-                  >
-                    Re-analyze
-                  </button>
-                </div>
-              </>
+                  );
+                })}
+              </ul>
+            )}
+
+            {selectedArtifactId && (
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-arvil-border">
+                <button
+                  type="button"
+                  disabled={loading || loadingArtifact}
+                  onClick={() =>
+                    loadSelectedArtifact(selectedArtifactId, { viewOnly: true })
+                  }
+                  className="px-3 py-1.5 rounded-lg border border-arvil-border text-xs hover:border-arvil-accent disabled:opacity-50"
+                >
+                  View analysis
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || loadingArtifact}
+                  onClick={() => analyze({ reanalyze: true })}
+                  className="px-3 py-1.5 rounded-lg border border-arvil-accent text-arvil-accent text-xs hover:bg-arvil-accent hover:text-white disabled:opacity-50"
+                >
+                  Re-analyze
+                </button>
+              </div>
             )}
             {loadingArtifact && (
               <p className="text-xs text-arvil-muted animate-pulse">
-                Loading log from database…
+                Loading log…
               </p>
             )}
           </div>
 
+          <details className="rounded-lg border border-arvil-border bg-arvil-panel/50">
+            <summary className="px-4 py-2 text-sm text-arvil-muted cursor-pointer hover:text-white">
+              Manual paste / upload (optional)
+            </summary>
+            <div className="px-4 pb-4 space-y-3 border-t border-arvil-border pt-3">
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -433,19 +439,24 @@ export default function Home() {
 
           <textarea
             value={logContent}
-            onChange={(e) => setLogContent(e.target.value)}
-            placeholder="Select a synced log above, or paste a GitHub Actions job log here..."
-            className="w-full h-80 font-mono text-xs bg-arvil-panel border border-arvil-border rounded-lg p-4 focus:outline-none focus:ring-2 focus:ring-arvil-accent resize-y"
+            onChange={(e) => {
+              setLogContent(e.target.value);
+              setSelectedArtifactId("");
+            }}
+            placeholder={`Paste a ${categoryLabel} log, or select a synced log above…`}
+            className="w-full h-48 font-mono text-xs bg-arvil-bg border border-arvil-border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-arvil-accent resize-y"
           />
 
           <button
             type="button"
             onClick={() => analyze()}
-            disabled={loading}
-            className="w-full py-3 rounded-lg bg-arvil-accent hover:bg-orange-600 text-white font-semibold disabled:opacity-50 transition"
+            disabled={loading || !logContent.trim()}
+            className="w-full py-2 rounded-lg border border-arvil-border text-sm hover:border-arvil-accent disabled:opacity-50"
           >
-            {loading ? "Analyzing..." : "Analyze log"}
+            {loading ? "Analyzing…" : "Analyze pasted log"}
           </button>
+            </div>
+          </details>
 
           {error && (
             <p className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded-lg p-3">
@@ -453,51 +464,21 @@ export default function Home() {
             </p>
           )}
 
-          {polledRuns.length > 0 && (
-            <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 max-h-36 overflow-y-auto">
-              <p className="text-xs font-medium text-arvil-muted mb-2">
-                Polled failed runs (TheRock)
-              </p>
-              <ul className="space-y-1">
-                {polledRuns.slice(0, 6).map((r) => (
-                  <li key={String(r.run_id)} className="text-xs text-gray-400">
-                    <a
-                      href={String(r.html_url ?? "#")}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-orange-400 hover:underline"
-                    >
-                      {String(r.workflow_name ?? "run")} #{String(r.github_run_id)}
-                    </a>
-                    {" — "}
-                    {String(r.analyses ?? 0)} analyses
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           {history.length > 0 && (
-            <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 max-h-40 overflow-y-auto">
+            <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 max-h-32 overflow-y-auto">
               <p className="text-xs font-medium text-arvil-muted mb-2">
-                Recent analyses (Neon)
+                Recent {categoryLabel} analyses
               </p>
               <ul className="space-y-1">
-                {history.slice(0, 8).map((h) => (
+                {history.slice(0, 5).map((h) => (
                   <li key={h.id} className="text-xs text-gray-400 truncate">
                     {new Date(h.created_at).toLocaleString()} — {h.errors_count}{" "}
-                    err — {h.workflow}
+                    errors
                   </li>
                 ))}
               </ul>
             </div>
           )}
-
-          <ol className="text-xs text-arvil-muted space-y-1 list-decimal list-inside border-t border-arvil-border pt-4">
-            <li>Sync failed runs from TheRock (primary)</li>
-            <li>Select a synced job log → Analyze or view saved triage</li>
-            <li>Or paste / upload a log manually</li>
-          </ol>
         </section>
 
         <section className="space-y-4">

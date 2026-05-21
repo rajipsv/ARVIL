@@ -1,5 +1,13 @@
 import type { WorkflowPreset } from "./types";
 
+/** Main TheRock categories shown in the UI (excludes "All workflows"). */
+export const CATEGORY_PRESETS: WorkflowPreset[] = [
+  "therock_multi_arch",
+  "therock_pytorch",
+  "therock_install",
+  "therock_unit_tests",
+];
+
 /** User-facing labels (matches analyzer WORKFLOW_HINTS). */
 export const PRESET_LABELS: Record<WorkflowPreset, string> = {
   therock_multi_arch: "Multi-Arch CI",
@@ -45,7 +53,16 @@ export function workflowNameToPreset(name: string, path?: string): WorkflowPrese
     return "therock_install";
   }
   if (n.includes("test_artifacts") || n.includes("test artifacts")) {
-    return "therock_multi_arch";
+    if (n.includes("pytorch") || n.includes("wheel") || n.includes("torch"))
+      return "therock_pytorch";
+    if (
+      n.includes("multi-arch") ||
+      n.includes("multi_arch") ||
+      n.includes("asan") ||
+      n.includes("gfx")
+    ) {
+      return "therock_multi_arch";
+    }
   }
   return "custom";
 }

@@ -264,9 +264,11 @@ export async function pollTheRock(options?: {
 
     try {
       const workflowName = run.name || "unknown";
+      const runPreset = workflowNameToPreset(workflowName);
       const runId = await upsertCiRun({
         github_repo: githubRepo,
         workflow_name: workflowName,
+        workflow_preset: runPreset,
         github_run_id: run.id,
         event: run.event,
         branch: run.head_branch,

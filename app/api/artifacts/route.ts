@@ -3,7 +3,7 @@ import {
   listIngestedArtifacts,
 } from "@/lib/db";
 import type { WorkflowPreset } from "@/lib/types";
-import { presetMatchesWorkflowName } from "@/lib/workflow-map";
+import { PRESET_LABELS } from "@/lib/workflow-map";
 import { NextRequest, NextResponse } from "next/server";
 
 const VALID_WORKFLOWS: WorkflowPreset[] = [
@@ -29,21 +29,28 @@ export async function GET(req: NextRequest) {
     }
 
     const workflowParam = req.nextUrl.searchParams.get("workflow");
-    const preset = VALID_WORKFLOWS.includes(workflowParam as WorkflowPreset)
-      ? (workflowParam as WorkflowPreset)
-      : null;
-
-    let artifacts = await listIngestedArtifacts(60);
-    if (preset && preset !== "custom") {
-      artifacts = artifacts.filter((a) =>
-        presetMatchesWorkflowName(
-          preset,
-          String(a.workflow_name ?? ""),
-          String(a.job_name ?? "")
-        )
-      );
+    if (
+      !workflowParam ||
+      !VALID_WORKFLOWS.includes(workflowParam as WorkflowPreset)
+    ) {
+      return NextResponse.json({ artifacts: [], workflow: null });
     }
-    return NextResponse.json({ artifacts, workflow: preset });
+    const preset = workflowParam as WorkflowPreset;
+
+    if (preset === "custom") {
+      return NextResponse.json({
+        artifacts: [],
+        workflow: preset,
+        hint: "Select a category (Multi-Arch, PyTorch Wheels, etc.) to list synced logs.",
+      });
+    }
+
+    const artifacts = await listIngestedArtifacts(30, preset);
+    return NextResponse.json({
+      artifacts,
+      workflow: preset,
+      category: PRESET_LABELS[preset],
+    });
   } catch (e) {
     console.error(e);
     return NextResponse.json(
