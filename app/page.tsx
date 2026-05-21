@@ -8,6 +8,7 @@ import type {
   WorkflowPreset,
 } from "@/lib/types";
 import { CATEGORY_PRESETS, PRESET_LABELS } from "@/lib/workflow-map";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const SAMPLE_LOG = `2024-12-10 10:15:25 ERROR [Database] Connection failed: Connection timeout after 30s
@@ -250,14 +251,22 @@ export default function Home() {
               logs — RAG + Neon history
             </p>
           </div>
-          <a
-            href="https://github.com/rajipsv/ARVIL"
-            className="text-sm text-arvil-muted hover:text-white"
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub
-          </a>
+          <div className="flex flex-wrap items-center gap-4 text-sm">
+            <Link
+              href="/dashboard"
+              className="text-arvil-accent font-medium hover:underline"
+            >
+              Executive dashboard
+            </Link>
+            <a
+              href="https://github.com/rajipsv/ARVIL"
+              className="text-arvil-muted hover:text-white"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub
+            </a>
+          </div>
         </div>
       </header>
 

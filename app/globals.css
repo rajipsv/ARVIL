@@ -13,3 +13,13 @@ body {
 textarea::placeholder {
   @apply text-arvil-muted;
 }
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: #111 !important;
+  }
+}

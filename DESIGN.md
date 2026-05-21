@@ -389,27 +389,63 @@ A: GFX-specific pattern packs, ASAN workflow preset, junit/ctest parsers, dashbo
 
 ---
 
-## 15. Repository map
+## 15. Executive metrics (management / AMD CI)
+
+**Routes:** `/dashboard` (live KPIs) · `/report?period=7d` (print / Save as PDF) · `GET /api/metrics?period=7d|30d`
+
+### KPI definitions
+
+| KPI | Definition |
+|-----|------------|
+| Failures qualified | Distinct `log_analyses` in period |
+| Auto-triage coverage | % polled `log_artifacts` with an analysis |
+| Known-issue rate | % `analysis_errors` with `kb_pattern_id` |
+| Critical concentration | % errors with severity CRITICAL |
+| Est. hours saved | `failures_qualified × ARVIL_MANUAL_TRIAGE_MINUTES ÷ 60` (default 45 min) |
+| TheRock streams | Breakdown by `ci_runs.workflow_preset` |
+| Repeat signatures | Same `kb_pattern_id` on ≥2 runs in 14d |
+
+### Presentation talking points (AMD)
+
+1. **Problem:** TheRock CI failures require 30–90 min senior QE log review each.  
+2. **Solution:** ARVIL auto-intake + qualification + ROCm KB — validation intelligence, not a log viewer.  
+3. **Outcomes:** failures qualified/week, known-signature %, hours saved (labeled assumption), stream/category charts for funding decisions.  
+4. **Alignment:** Multi-Arch / PyTorch wheels / install streams → ROCm release confidence.
+
+### Engineer vs executive surfaces
+
+| Surface | User | URL |
+|---------|------|-----|
+| Engineer console | QE / validation | `/` |
+| Executive dashboard | Directors / program leads | `/dashboard` |
+| Executive report | QBR / email / slides | `/report` |
+
+---
+
+## 16. Repository map
 
 ```
 ARVIL/
-  app/                    # Next.js pages + API routes
+  app/
+    dashboard/            # Executive KPI dashboard
+    report/               # Printable executive summary
+    api/metrics/          # KPI JSON
+  components/
+    executive-metrics.tsx # Shared exec UI
   lib/
+    metrics.ts            # SQL aggregates + demo fallback
     analyzer.ts           # Web analysis engine
     github-poll.ts        # TheRock ingestion
     db.ts                 # Neon access + schema v2
-    knowledge.ts          # Keyword RAG
-    data/patterns.json    # Failure KB
-  scripts/schema_v2.sql   # DDL reference
-  python/agentic/         # LangGraph agent + tools + KB
-  python/workflow/        # Workflow analyzer + MCP stub
-  .github/workflows/      # poll-therock.yml
-  DESIGN.md               # This document
+  scripts/schema_v2.sql
+  python/agentic/
+  .github/workflows/
+  DESIGN.md
 ```
 
 ---
 
-## 16. Related reading
+## 17. Related reading
 
 - [ROCm/TheRock](https://github.com/ROCm/TheRock) — target CI repository  
 - [GitHub Actions API — workflow runs](https://docs.github.com/en/rest/actions/workflow-runs)  
@@ -418,4 +454,4 @@ ARVIL/
 
 ---
 
-*Document version: 1.0 — aligned with ARVIL `main` branch (Next.js at repo root, schema v2, GitHub poll + Actions scheduler).*
+*Document version: 1.1 — includes executive dashboard, report export, and KPI API.*

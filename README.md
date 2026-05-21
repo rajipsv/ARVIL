@@ -32,6 +32,15 @@ npm run dev
 
 Open http://localhost:3000 → **Sync now from TheRock Actions** or paste a log manually.
 
+## Executive dashboard (AMD / leadership)
+
+| URL | Purpose |
+|-----|---------|
+| `/dashboard` | KPI tiles, TheRock stream breakdown, trends, repeat ROCm signatures |
+| `/report?period=7d` | Print-friendly summary (Save as PDF) |
+
+Set `ARVIL_MANUAL_TRIAGE_MINUTES=45` (optional) for hours-saved ROI. See [DESIGN.md](DESIGN.md) §15 for KPI definitions.
+
 ## Database schema v2
 
 Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let the app auto-create on first request.
