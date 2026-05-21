@@ -1,4 +1,5 @@
 import { analyzeLog, analyzeLogDeep } from "@/lib/analyzer";
+import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import {
   getArtifactDetail,
   getArtifactLogText,
@@ -51,12 +52,15 @@ export async function POST(req: NextRequest) {
       const latest = meta.latest_analysis as Record<string, unknown> | null;
 
       if (viewOnly && latest?.result_json) {
-        const existing = latest.result_json as AnalysisResult;
+        const raw = latest.result_json as AnalysisResult;
+        const upgraded = isLegacyAnalysis(raw);
+        const existing = upgraded ? upgradeLegacyAnalysis(raw) : raw;
         return NextResponse.json({
           ...existing,
           saved_id: String(latest.id),
           artifact_id: artifactId,
           from_cache: true,
+          upgraded,
         });
       }
 
@@ -70,13 +74,16 @@ export async function POST(req: NextRequest) {
       logContent = fromDb;
 
       if (!reanalyze && latest?.result_json) {
-        const existing = latest.result_json as AnalysisResult;
-        return NextResponse.json({
-          ...existing,
-          saved_id: String(latest.id),
-          artifact_id: artifactId,
-          from_cache: true,
-        });
+        const raw = latest.result_json as AnalysisResult;
+        if (!isLegacyAnalysis(raw)) {
+          return NextResponse.json({
+            ...raw,
+            saved_id: String(latest.id),
+            artifact_id: artifactId,
+            from_cache: true,
+          });
+        }
+        // Legacy cache missing root_causes — recompute below
       }
     }
 

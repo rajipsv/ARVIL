@@ -3,7 +3,11 @@
  */
 import { lookupKnownFailure } from "../lib/knowledge";
 import { groupRootCauses, selfTestRootCause } from "../lib/root-cause";
-import type { LogError } from "../lib/types";
+import type { AnalysisResult, LogError } from "../lib/types";
+import {
+  isLegacyAnalysis,
+  upgradeLegacyAnalysis,
+} from "../lib/upgrade-analysis";
 
 const FIXTURE: LogError[] = [
   {
@@ -71,6 +75,32 @@ function main() {
     ok = false;
   } else {
     console.log("OK: GHA wrapper attached");
+  }
+
+  const legacy: AnalysisResult = {
+    timestamp: "",
+    mode: "arvil_web_tool_rag",
+    workflow: "therock_multi_arch",
+    source_label: "test",
+    line_count: 200,
+    errors_count: 3,
+    summary: "old",
+    errors: FIXTURE,
+    rag_lookups: [],
+    stats: { lines: 200 },
+    root_causes: [],
+  };
+  if (!isLegacyAnalysis(legacy)) {
+    console.error("FAIL: isLegacyAnalysis");
+    ok = false;
+  } else {
+    const up = upgradeLegacyAnalysis(legacy);
+    if (up.errors_count !== 1) {
+      console.error(`FAIL: legacy upgrade expected 1 group, got ${up.errors_count}`);
+      ok = false;
+    } else {
+      console.log("OK: legacy Neon cache upgrades to 1 root cause");
+    }
   }
 
   process.exit(ok ? 0 : 1);

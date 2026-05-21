@@ -1,6 +1,7 @@
 "use client";
 
 import { WORKFLOW_HINTS } from "@/lib/analyzer";
+import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import type {
   AnalysisResult,
   HistoryItem,
@@ -31,7 +32,18 @@ export default function Home() {
   const [loadingArtifact, setLoadingArtifact] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const applyResult = useCallback((data: AnalysisResult) => {
+    if (isLegacyAnalysis(data)) {
+      setAnalysisUpgraded(true);
+      setResult(upgradeLegacyAnalysis(data));
+    } else {
+      setAnalysisUpgraded(false);
+      setResult(data);
+    }
+  }, []);
 
   const loadCategoryData = useCallback(async () => {
     setSyncedLogs([]);
@@ -170,7 +182,7 @@ export default function Home() {
         setLoadingArtifact(false);
       }
     },
-    []
+    [applyResult]
   );
 
   const analyze = useCallback(
@@ -205,7 +217,7 @@ export default function Home() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Request failed");
-        setResult(data);
+        applyResult(data);
         loadCategoryData();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Analysis failed");
@@ -213,7 +225,7 @@ export default function Home() {
         setLoading(false);
       }
     },
-    [logContent, workflow, fileName, selectedArtifactId, loadCategoryData]
+    [logContent, workflow, fileName, selectedArtifactId, loadCategoryData, applyResult]
   );
 
   const downloadJson = () => {
@@ -553,6 +565,12 @@ export default function Home() {
                   </button>
                 </div>
                 <p className="text-sm mt-2 text-gray-300">{result.summary}</p>
+                {analysisUpgraded && (
+                  <p className="text-xs text-amber-300/90 mt-2">
+                    Grouped an older saved analysis. Click Analyze to re-run on the
+                    full log and save to Neon.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-3 mt-4 text-xs">
                   <span className="px-2 py-1 rounded bg-arvil-bg">
                     {result.errors_count} root cause

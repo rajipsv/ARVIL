@@ -9,7 +9,8 @@ export type { LineRole, RelatedLine, RootCauseGroup } from "./types";
 const GHA_WRAPPER =
   /##\[error\]|process completed with exit code [1-9]/i;
 const CALLED_PROCESS = /CalledProcessError/i;
-const RAISE_ONLY = /^\s*raise\s+\w+Error/i;
+/** GitHub Actions timestamps precede Python traceback lines. */
+const RAISE_ONLY = /\braise\s+\w*Error/i;
 const HAS_COMMAND = /Command\s*\[|returned non-zero exit status/i;
 
 function normalizeForDedupe(msg: string): string {
@@ -61,18 +62,27 @@ export function groupRootCauses(lineErrors: LogError[]): RootCauseGroup[] {
 
   const groups: RootCauseGroup[] = [];
 
-  // Phase 1: CalledProcessError clusters (lines within 8 of each other)
+  function isChainLine(text: string): boolean {
+    return (
+      isCalledProcessLine(text) ||
+      isStackOnlyRaise(text) ||
+      isGhaWrapper(text) ||
+      (/\braise\s/i.test(text) && /Error/i.test(text))
+    );
+  }
+
+  // Phase 1: subprocess / CalledProcessError chains (within 15 log lines)
   for (let i = 0; i < sorted.length; i++) {
     if (used.has(i)) continue;
-    if (!isCalledProcessLine(sorted[i].message)) continue;
+    if (!isChainLine(sorted[i].message)) continue;
+    if (isGhaWrapper(sorted[i].message)) continue;
 
     const clusterIdx = [i];
+    const endLine = sorted[i].line_number + 15;
     for (let j = i + 1; j < sorted.length; j++) {
       if (used.has(j)) continue;
-      if (sorted[j].line_number - sorted[i].line_number > 8) break;
-      if (isCalledProcessLine(sorted[j].message) || isStackOnlyRaise(sorted[j].message)) {
-        clusterIdx.push(j);
-      }
+      if (sorted[j].line_number > endLine) break;
+      if (isChainLine(sorted[j].message)) clusterIdx.push(j);
     }
 
     for (const idx of clusterIdx) used.add(idx);
