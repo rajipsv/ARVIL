@@ -7,8 +7,12 @@ import type {
   SyncedLogArtifact,
   WorkflowPreset,
 } from "@/lib/types";
-import { workflowNameToPreset } from "@/lib/workflow-map";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  PRESET_LABELS,
+  presetMatchesWorkflowName,
+  workflowNameToPreset,
+} from "@/lib/workflow-map";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const WORKFLOWS = Object.keys(WORKFLOW_HINTS) as WorkflowPreset[];
 
@@ -38,7 +42,7 @@ export default function Home() {
     try {
       const [histRes, artRes] = await Promise.all([
         fetch("/api/history"),
-        fetch("/api/artifacts"),
+        fetch(`/api/artifacts?workflow=${encodeURIComponent(workflow)}`),
       ]);
       const histData = await histRes.json();
       if (histRes.ok) {
@@ -52,7 +56,7 @@ export default function Home() {
     } catch {
       /* Neon optional */
     }
-  }, []);
+  }, [workflow]);
 
   const syncTheRock = useCallback(async () => {
     setSyncing(true);
@@ -62,18 +66,29 @@ export default function Home() {
       const res = await fetch("/api/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxRuns: 2 }),
+        body: JSON.stringify({ maxRuns: 2, workflow }),
       });
       const data = await res.json();
       if (!res.ok) {
         const parts = [data.error, data.hint, ...(data.errors ?? [])].filter(Boolean);
         throw new Error(parts.join(" — ") || "Sync failed");
       }
-      setSyncMsg(
-        `Synced ${data.runs_ingested ?? 0} runs, ${data.artifacts_created ?? 0} logs, ${data.analyses_created ?? 0} analyses`
-      );
+      const label = PRESET_LABELS[workflow];
+      const parts = [
+        `[${label}]`,
+        `${data.runs_ingested ?? 0} new run(s)`,
+        `${data.artifacts_created ?? 0} log(s)`,
+        `${data.analyses_created ?? 0} analysis`,
+      ];
+      if (data.runs_skipped_filter > 0) {
+        parts.push(`(${data.runs_skipped_filter} other workflow(s) skipped)`);
+      }
+      if (data.runs_matched > 0 && data.runs_ingested === 0) {
+        parts.push("— matched failures already in database");
+      }
+      setSyncMsg(parts.join(" · "));
       if (data.errors?.length) {
-        setSyncMsg((m) => `${m}. ${data.errors.slice(0, 3).join("; ")}`);
+        setSyncMsg((m) => `${m}. ${data.errors.slice(0, 2).join("; ")}`);
       }
       loadHistory();
     } catch (err) {
@@ -81,7 +96,7 @@ export default function Home() {
     } finally {
       setSyncing(false);
     }
-  }, [loadHistory]);
+  }, [loadHistory, workflow]);
 
   useEffect(() => {
     loadHistory();
@@ -194,6 +209,27 @@ export default function Home() {
 
   const hint = WORKFLOW_HINTS[workflow];
 
+  const filteredSyncedLogs = useMemo(() => {
+    if (workflow === "custom") return syncedLogs;
+    return syncedLogs.filter((a) =>
+      presetMatchesWorkflowName(
+        workflow,
+        a.workflow_name ?? "",
+        a.job_name ?? ""
+      )
+    );
+  }, [syncedLogs, workflow]);
+
+  useEffect(() => {
+    if (
+      selectedArtifactId &&
+      !filteredSyncedLogs.some((a) => a.artifact_id === selectedArtifactId)
+    ) {
+      setSelectedArtifactId("");
+      setResult(null);
+    }
+  }, [workflow, filteredSyncedLogs, selectedArtifactId]);
+
   return (
     <main className="min-h-screen">
       <header className="border-b border-arvil-border bg-arvil-panel/80 backdrop-blur sticky top-0 z-10">
@@ -232,11 +268,15 @@ export default function Home() {
       <div className="max-w-6xl mx-auto px-4 py-8 grid lg:grid-cols-2 gap-8">
         <section className="space-y-4">
           <label className="block text-sm font-medium text-arvil-muted">
-            TheRock workflow preset
+            TheRock workflow category
           </label>
           <select
             value={workflow}
-            onChange={(e) => setWorkflow(e.target.value as WorkflowPreset)}
+            onChange={(e) => {
+              setWorkflow(e.target.value as WorkflowPreset);
+              setSelectedArtifactId("");
+              setSyncMsg(null);
+            }}
             className="w-full bg-arvil-panel border border-arvil-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arvil-accent"
           >
             {WORKFLOWS.map((w) => (
@@ -245,11 +285,13 @@ export default function Home() {
               </option>
             ))}
           </select>
-          <p className="text-xs text-arvil-muted">{hint.hint}</p>
+          <p className="text-xs text-arvil-muted">
+            {hint.hint} Sync and log list filter to this category.
+          </p>
 
           <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-2">
             <p className="text-xs font-medium text-arvil-muted">
-              TheRock poll (primary) — needs GITHUB_TOKEN on server
+              Sync failed runs — category: {PRESET_LABELS[workflow]}
             </p>
             <button
               type="button"
@@ -257,19 +299,22 @@ export default function Home() {
               disabled={syncing || loading}
               className="w-full py-2 rounded-lg border border-arvil-accent text-arvil-accent text-sm font-medium hover:bg-arvil-accent hover:text-white disabled:opacity-50 transition"
             >
-              {syncing ? "Syncing failed runs..." : "Sync now from TheRock Actions"}
+              {syncing
+                ? `Syncing ${PRESET_LABELS[workflow]}…`
+                : `Sync failed ${PRESET_LABELS[workflow]} runs`}
             </button>
             {syncMsg && <p className="text-xs text-green-400">{syncMsg}</p>}
           </div>
 
           <div className="rounded-lg border border-arvil-border bg-arvil-panel p-3 space-y-3">
             <p className="text-xs font-medium text-arvil-muted">
-              Synced logs — select to analyze (from Neon)
+              Synced logs — {PRESET_LABELS[workflow]} ({filteredSyncedLogs.length})
             </p>
-            {syncedLogs.length === 0 ? (
+            {filteredSyncedLogs.length === 0 ? (
               <p className="text-xs text-gray-500">
-                No synced logs yet. Click &quot;Sync now&quot; above, then pick a job
-                log here.
+                No logs for {PRESET_LABELS[workflow]}. Click &quot;Sync failed{" "}
+                {PRESET_LABELS[workflow]} runs&quot; above, or choose &quot;All
+                workflows&quot;.
               </p>
             ) : (
               <>
@@ -283,8 +328,10 @@ export default function Home() {
                   disabled={loadingArtifact || loading}
                   className="w-full bg-arvil-bg border border-arvil-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-arvil-accent"
                 >
-                  <option value="">— Select a synced job log —</option>
-                  {syncedLogs.map((a) => (
+                  <option value="">
+                    — Select {PRESET_LABELS[workflow]} job log —
+                  </option>
+                  {filteredSyncedLogs.map((a) => (
                     <option key={a.artifact_id} value={a.artifact_id}>
                       #{a.github_run_id ?? "?"} · {a.job_name ?? "job"} ·{" "}
                       {a.workflow_name ?? "workflow"}
@@ -293,7 +340,7 @@ export default function Home() {
                   ))}
                 </select>
                 <ul className="max-h-28 overflow-y-auto space-y-1 border-t border-arvil-border pt-2">
-                  {syncedLogs.slice(0, 8).map((a) => (
+                  {filteredSyncedLogs.slice(0, 8).map((a) => (
                     <li key={a.artifact_id}>
                       <button
                         type="button"

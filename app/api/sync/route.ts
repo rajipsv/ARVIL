@@ -1,5 +1,14 @@
 import { normalizeGithubRepo, pollTheRock } from "@/lib/github-poll";
+import type { WorkflowPreset } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
+
+const VALID_WORKFLOWS: WorkflowPreset[] = [
+  "therock_multi_arch",
+  "therock_install",
+  "therock_pytorch",
+  "therock_unit_tests",
+  "custom",
+];
 
 export const maxDuration = 60;
 export const runtime = "nodejs";
@@ -51,7 +60,10 @@ async function runSync(req: NextRequest) {
       return NextResponse.json(
         {
           ok: false,
+          workflow_preset: null,
           runs_checked: 0,
+          runs_matched: 0,
+          runs_skipped_filter: 0,
           runs_ingested: 0,
           artifacts_created: 0,
           analyses_created: 0,
@@ -70,7 +82,10 @@ async function runSync(req: NextRequest) {
       typeof body.maxRuns === "number"
         ? Math.min(Math.max(1, body.maxRuns), 3)
         : 2;
-    const result = await pollTheRock({ maxRuns });
+    const workflowPreset = VALID_WORKFLOWS.includes(body.workflow)
+      ? (body.workflow as WorkflowPreset)
+      : undefined;
+    const result = await pollTheRock({ maxRuns, workflowPreset });
     if (!result.ok && result.runs_ingested === 0) {
       return NextResponse.json(result, { status: 502 });
     }

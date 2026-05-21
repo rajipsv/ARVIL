@@ -11,7 +11,11 @@ import {
   saveAnalysisV2,
   upsertCiRun,
 } from "./db";
-import { workflowNameToPreset } from "./workflow-map";
+import {
+  presetMatchesWorkflowName,
+  workflowNameToPreset,
+} from "./workflow-map";
+import type { WorkflowPreset } from "./types";
 
 const GITHUB_API = "https://api.github.com";
 const LOG_PREVIEW_MAX = 32_000;
@@ -20,7 +24,10 @@ const MAX_JOBS_PER_RUN = 1;
 
 export interface SyncResult {
   ok: boolean;
+  workflow_preset: WorkflowPreset | null;
   runs_checked: number;
+  runs_matched: number;
+  runs_skipped_filter: number;
   runs_ingested: number;
   artifacts_created: number;
   analyses_created: number;
@@ -46,6 +53,45 @@ interface GhJob {
   conclusion?: string;
   started_at?: string;
   completed_at?: string;
+}
+
+interface GhWorkflow {
+  id: number;
+  name?: string;
+  path?: string;
+}
+
+async function workflowIdsForPreset(
+  owner: string,
+  repo: string,
+  token: string,
+  preset: WorkflowPreset
+): Promise<Set<number>> {
+  const ids = new Set<number>();
+  const res = await ghFetch(`/repos/${owner}/${repo}/actions/workflows`, token);
+  if (!res.ok) return ids;
+
+  const data = (await res.json()) as { workflows?: GhWorkflow[] };
+  for (const wf of data.workflows ?? []) {
+    if (
+      presetMatchesWorkflowName(preset, wf.name ?? "", wf.path ?? "")
+    ) {
+      ids.add(wf.id);
+    }
+  }
+  return ids;
+}
+
+function runMatchesPreset(
+  run: GhRun,
+  preset: WorkflowPreset | undefined,
+  workflowIds: Set<number>
+): boolean {
+  if (!preset || preset === "custom") return true;
+  if (run.workflow_id && workflowIds.size > 0 && workflowIds.has(run.workflow_id)) {
+    return true;
+  }
+  return presetMatchesWorkflowName(preset, run.name ?? "");
 }
 
 /** Accept `ROCm/TheRock` or `https://github.com/ROCm/TheRock` (common misconfiguration). */
@@ -152,14 +198,19 @@ async function downloadJobLogText(
 export async function pollTheRock(options?: {
   perPage?: number;
   maxRuns?: number;
+  workflowPreset?: WorkflowPreset;
 }): Promise<SyncResult> {
   const token = process.env.GITHUB_TOKEN;
   const githubRepo = normalizeGithubRepo(
     process.env.GITHUB_REPO || "ROCm/TheRock"
   );
+  const preset = options?.workflowPreset;
   const result: SyncResult = {
     ok: false,
+    workflow_preset: preset ?? null,
     runs_checked: 0,
+    runs_matched: 0,
+    runs_skipped_filter: 0,
     runs_ingested: 0,
     artifacts_created: 0,
     analyses_created: 0,
@@ -172,8 +223,14 @@ export async function pollTheRock(options?: {
   }
 
   const { owner, name } = repoParts(githubRepo);
-  const perPage = options?.perPage ?? 20;
+  const filtering = preset && preset !== "custom";
+  const perPage = options?.perPage ?? (filtering ? 50 : 20);
   const maxRuns = options?.maxRuns ?? MAX_NEW_RUNS_PER_SYNC;
+
+  const workflowIds =
+    filtering && preset
+      ? await workflowIdsForPreset(owner, name, token, preset)
+      : new Set<number>();
 
   const runsRes = await ghFetch(
     `/repos/${owner}/${name}/actions/runs?status=failure&per_page=${perPage}`,
@@ -290,6 +347,14 @@ export async function pollTheRock(options?: {
     }
   }
 
-  result.ok = result.errors.length === 0 || result.runs_ingested > 0;
+  if (filtering && result.runs_matched === 0 && result.runs_checked > 0) {
+    result.errors.push(
+      `No failed runs matched preset "${preset}" in the last ${result.runs_checked} failures — try "All workflows" or another category.`
+    );
+  }
+
+  result.ok =
+    result.runs_ingested > 0 ||
+    (result.errors.length === 0 && result.runs_matched > 0);
   return result;
 }
