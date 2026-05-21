@@ -1,3 +1,4 @@
+import { stripStaleDeepFields } from "@/lib/analysis-display";
 import { analyzeLog, analyzeLogDeep } from "@/lib/analyzer";
 import { getLlmDiag } from "@/lib/llm-config";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
@@ -65,7 +66,9 @@ export async function POST(req: NextRequest) {
       if (viewOnly && latest?.result_json) {
         const raw = latest.result_json as AnalysisResult;
         const upgraded = isLegacyAnalysis(raw);
-        const existing = upgraded ? upgradeLegacyAnalysis(raw) : raw;
+        const existing = stripStaleDeepFields(
+          upgraded ? upgradeLegacyAnalysis(raw) : raw
+        );
         return NextResponse.json({
           ...existing,
           saved_id: String(latest.id),
@@ -88,7 +91,7 @@ export async function POST(req: NextRequest) {
         const raw = latest.result_json as AnalysisResult;
         if (!isLegacyAnalysis(raw)) {
           return NextResponse.json({
-            ...raw,
+            ...stripStaleDeepFields(raw),
             saved_id: String(latest.id),
             artifact_id: artifactId,
             from_cache: true,
@@ -115,13 +118,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = deep
+    let result = deep
       ? await analyzeLogDeep(logContent, workflow, sourceLabel)
       : analyzeLog(logContent, workflow, sourceLabel);
+    if (!deep) {
+      result = stripStaleDeepFields(result);
+    }
+    const toSave =
+      result.deep_status === "skipped"
+        ? stripStaleDeepFields(result)
+        : result;
     let savedId: string | null = null;
     try {
       savedId = await saveAnalysisV2(
-        result,
+        toSave,
         logContent,
         linkedArtifactId
       );

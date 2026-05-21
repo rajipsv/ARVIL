@@ -1,6 +1,10 @@
 "use client";
 
 import { WORKFLOW_HINTS } from "@/lib/analyzer";
+import {
+  shouldShowDeepPanel,
+  stripStaleDeepFields,
+} from "@/lib/analysis-display";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import type {
   AnalysisResult,
@@ -36,15 +40,22 @@ export default function Home() {
   const [deepLoading, setDeepLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const applyResult = useCallback((data: AnalysisResult) => {
-    if (isLegacyAnalysis(data)) {
-      setAnalysisUpgraded(true);
-      setResult(upgradeLegacyAnalysis(data));
-    } else {
-      setAnalysisUpgraded(false);
-      setResult(data);
-    }
-  }, []);
+  const applyResult = useCallback(
+    (
+      data: AnalysisResult,
+      opts?: { fromDeep?: boolean; fromServer?: boolean }
+    ) => {
+      const wasLegacy = isLegacyAnalysis(data);
+      let next = wasLegacy ? upgradeLegacyAnalysis(data) : data;
+      if (!opts?.fromDeep) {
+        next = stripStaleDeepFields(next);
+      }
+      // Only show "older saved analysis" when we upgraded cached JSON in the browser.
+      setAnalysisUpgraded(wasLegacy && !opts?.fromServer);
+      setResult(next);
+    },
+    []
+  );
 
   const loadCategoryData = useCallback(async () => {
     setSyncedLogs([]);
@@ -197,6 +208,7 @@ export default function Home() {
       setLoading(true);
       setDeepLoading(Boolean(opts?.deep));
       setError(null);
+      setAnalysisUpgraded(false);
       if (opts?.reanalyze && !opts?.deep) setResult(null);
       const forceReanalyze = Boolean(opts?.reanalyze || opts?.deep);
       try {
@@ -221,7 +233,10 @@ export default function Home() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Request failed");
-        applyResult(data);
+        applyResult(data, {
+          fromDeep: Boolean(opts?.deep),
+          fromServer: true,
+        });
         loadCategoryData();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Analysis failed");
@@ -574,8 +589,8 @@ export default function Home() {
                 <p className="text-sm mt-2 text-gray-300">{result.summary}</p>
                 {analysisUpgraded && (
                   <p className="text-xs text-amber-300/90 mt-2">
-                    Grouped an older saved analysis. Click Analyze to re-run on the
-                    full log and save to Neon.
+                    Displaying grouped results from an older saved analysis. Click
+                    Re-analyze to run on the full log and save a fresh result to Neon.
                   </p>
                 )}
                 <div className="flex flex-wrap gap-3 mt-4 text-xs">
@@ -607,47 +622,38 @@ export default function Home() {
                 </div>
               </div>
 
-              {result.deep_status && (
+              {shouldShowDeepPanel(result) && (
                 <div
                   className={`text-sm rounded-lg p-4 border ${
-                    result.deep_status === "ok"
+                    result.deep_status === "ok" ||
+                    result.analysis_mode === "tool_rag_llm"
                       ? "text-purple-100 border-purple-700/50 bg-purple-950/30"
-                      : result.deep_status === "skipped"
-                        ? "text-amber-200/90 border-amber-900/50 bg-amber-950/30"
-                        : "text-red-200/90 border-red-900/50 bg-red-950/30"
+                      : "text-red-200/90 border-red-900/50 bg-red-950/30"
                   }`}
                 >
                   <p className="font-semibold text-sm mb-2">
                     Deep analyze
-                    {result.deep_status === "ok" && result.llm_provider
+                    {result.llm_provider && result.llm_provider !== "none"
                       ? ` · ${result.llm_provider}`
-                      : ` · ${result.deep_status}`}
+                      : ""}
                   </p>
                   <p className="leading-relaxed">
                     {result.deep_message ??
                       result.deep_narrative ??
                       "No deep analyze output."}
                   </p>
-                  {result.deep_status === "skipped" && (
-                    <p className="text-xs mt-3 text-amber-300/80">
-                      After adding{" "}
-                      <code className="text-orange-300">NVIDIA_API_KEY</code> on
-                      Vercel, redeploy and open{" "}
+                  {result.deep_status === "failed" && (
+                    <p className="text-xs mt-2 opacity-80">
+                      Rule-based results below are still valid. Check{" "}
                       <a
                         href="/api/analyze?diag=1"
                         target="_blank"
                         rel="noreferrer"
-                        className="underline hover:text-white"
+                        className="underline"
                       >
                         /api/analyze?diag=1
                       </a>{" "}
-                      — expect <code className="text-orange-300">llm_ready: true</code>.
-                    </p>
-                  )}
-                  {result.deep_status === "failed" && (
-                    <p className="text-xs mt-2 opacity-80">
-                      Rule-based results below are still valid. Retry after checking
-                      the diag endpoint and Vercel logs.
+                      and Vercel logs, then try Deep analyze again.
                     </p>
                   )}
                 </div>

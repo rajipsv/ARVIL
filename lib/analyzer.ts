@@ -1,5 +1,6 @@
 import { extractFailureWindow } from "./failure-window";
 import { lookupKnownFailure } from "./knowledge";
+import { getLlmDiag } from "./llm-config";
 import { refineRootCausesWithLlm } from "./llm-group";
 import {
   buildSummaryFromGroups,
@@ -254,13 +255,24 @@ export async function analyzeLogDeep(
   try {
     const llm = await refineRootCausesWithLlm(snippet, base.root_causes);
     if (!llm) {
+      const diag = getLlmDiag();
+      if (diag.llm_ready) {
+        return {
+          ...base,
+          deep_status: "failed",
+          deep_message:
+            base.root_causes.length === 0
+              ? "No root causes to send to the LLM. Try Re-analyze first."
+              : "LLM call did not return a result. Check Vercel function logs or try again.",
+        };
+      }
       return {
         ...base,
         mode: "arvil_web_tool_rag",
         analysis_mode: "tool_rag",
         deep_status: "skipped",
         deep_message:
-          "Deep analyze needs NVIDIA_API_KEY or OPENAI_API_KEY in Vercel → Project → Settings → Environment Variables.",
+          "Deep analyze needs NVIDIA_API_KEY or OPENAI_API_KEY in Vercel (then redeploy).",
       };
     }
 

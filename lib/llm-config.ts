@@ -10,6 +10,7 @@ export function getLlmDiag() {
     preferred_provider: nvidia ? "nvidia" : openai ? "openai" : null,
     nvidia_model:
       process.env.NVIDIA_MODEL?.trim() || "meta/llama-3.1-70b-instruct",
+    vercel_env: process.env.VERCEL_ENV ?? null,
     hint: !nvidia && !openai
       ? "Add NVIDIA_API_KEY (or OPENAI_API_KEY) in Vercel → Settings → Environment Variables, then redeploy."
       : undefined,
