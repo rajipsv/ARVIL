@@ -1,10 +1,7 @@
 "use client";
 
 import { WORKFLOW_HINTS } from "@/lib/analyzer";
-import {
-  shouldShowDeepPanel,
-  stripStaleDeepFields,
-} from "@/lib/analysis-display";
+import { stripStaleDeepFields } from "@/lib/analysis-display";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import type {
   AnalysisResult,
@@ -37,19 +34,13 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
-  const [deepLoading, setDeepLoading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const applyResult = useCallback(
-    (
-      data: AnalysisResult,
-      opts?: { fromDeep?: boolean; fromServer?: boolean }
-    ) => {
+    (data: AnalysisResult, opts?: { fromServer?: boolean }) => {
       const wasLegacy = isLegacyAnalysis(data);
       let next = wasLegacy ? upgradeLegacyAnalysis(data) : data;
-      if (!opts?.fromDeep) {
-        next = stripStaleDeepFields(next);
-      }
+      next = stripStaleDeepFields(next);
       // Only show "older saved analysis" when we upgraded cached JSON in the browser.
       setAnalysisUpgraded(wasLegacy && !opts?.fromServer);
       setResult(next);
@@ -199,18 +190,16 @@ export default function Home() {
   );
 
   const analyze = useCallback(
-    async (opts?: { reanalyze?: boolean; deep?: boolean }) => {
+    async (opts?: { reanalyze?: boolean }) => {
       const useArtifact = Boolean(selectedArtifactId);
       if (!useArtifact && !logContent.trim()) {
         setError("Select a synced log, or paste / upload a log file.");
         return;
       }
       setLoading(true);
-      setDeepLoading(Boolean(opts?.deep));
       setError(null);
       setAnalysisUpgraded(false);
-      if (opts?.reanalyze && !opts?.deep) setResult(null);
-      const forceReanalyze = Boolean(opts?.reanalyze || opts?.deep);
+      if (opts?.reanalyze) setResult(null);
       try {
         const res = await fetch("/api/analyze", {
           method: "POST",
@@ -220,29 +209,23 @@ export default function Home() {
               ? {
                   artifactId: selectedArtifactId,
                   workflow,
-                  reanalyze: forceReanalyze,
-                  deep: opts?.deep ?? false,
+                  reanalyze: opts?.reanalyze ?? false,
                 }
               : {
                   logContent,
                   workflow,
                   sourceLabel: fileName ?? "paste",
-                  deep: opts?.deep ?? false,
                 }
           ),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Request failed");
-        applyResult(data, {
-          fromDeep: Boolean(opts?.deep),
-          fromServer: true,
-        });
+        applyResult(data, { fromServer: true });
         loadCategoryData();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Analysis failed");
       } finally {
         setLoading(false);
-        setDeepLoading(false);
       }
     },
     [logContent, workflow, fileName, selectedArtifactId, loadCategoryData, applyResult]
@@ -451,15 +434,6 @@ export default function Home() {
                 >
                   Re-analyze
                 </button>
-                <button
-                  type="button"
-                  disabled={loading || loadingArtifact}
-                  onClick={() => analyze({ reanalyze: true, deep: true })}
-                  className="px-3 py-1.5 rounded-lg border border-purple-500/60 text-purple-300 text-xs hover:bg-purple-950/50 disabled:opacity-50"
-                  title="Requires NVIDIA_API_KEY or OPENAI_API_KEY on Vercel"
-                >
-                  Deep analyze
-                </button>
               </div>
             )}
             {loadingArtifact && (
@@ -514,24 +488,14 @@ export default function Home() {
             className="w-full h-48 font-mono text-xs bg-arvil-bg border border-arvil-border rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-arvil-accent resize-y"
           />
 
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => analyze()}
-              disabled={loading || !logContent.trim()}
-              className="flex-1 py-2 rounded-lg border border-arvil-border text-sm hover:border-arvil-accent disabled:opacity-50"
-            >
-              {loading ? "Analyzing…" : "Analyze"}
-            </button>
-            <button
-              type="button"
-              onClick={() => analyze({ deep: true })}
-              disabled={loading || !logContent.trim()}
-              className="flex-1 py-2 rounded-lg border border-purple-500/50 text-sm text-purple-300 hover:bg-purple-950/40 disabled:opacity-50"
-            >
-              Deep analyze
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => analyze()}
+            disabled={loading || !logContent.trim()}
+            className="w-full py-2 rounded-lg border border-arvil-border text-sm hover:border-arvil-accent disabled:opacity-50"
+          >
+            {loading ? "Analyzing…" : "Analyze"}
+          </button>
             </div>
           </details>
 
@@ -567,9 +531,7 @@ export default function Home() {
 
           {loading && (
             <div className="rounded-lg border border-arvil-border bg-arvil-panel p-8 text-center text-arvil-muted animate-pulse">
-              {deepLoading
-                ? "Deep analyze — calling LLM (rules run first)…"
-                : "Running grep + RAG on failure region…"}
+              Running grep + RAG on failure region…
             </div>
           )}
 
@@ -598,11 +560,6 @@ export default function Home() {
                     {result.errors_count} root cause
                     {result.errors_count === 1 ? "" : "s"}
                   </span>
-                  {result.analysis_mode === "tool_rag_llm" && (
-                    <span className="px-2 py-1 rounded bg-purple-950 text-purple-300">
-                      LLM · {result.llm_provider}
-                    </span>
-                  )}
                   <span className="px-2 py-1 rounded bg-arvil-bg">
                     {result.line_count} lines
                   </span>
@@ -621,43 +578,6 @@ export default function Home() {
                   )}
                 </div>
               </div>
-
-              {shouldShowDeepPanel(result) && (
-                <div
-                  className={`text-sm rounded-lg p-4 border ${
-                    result.deep_status === "ok" ||
-                    result.analysis_mode === "tool_rag_llm"
-                      ? "text-purple-100 border-purple-700/50 bg-purple-950/30"
-                      : "text-red-200/90 border-red-900/50 bg-red-950/30"
-                  }`}
-                >
-                  <p className="font-semibold text-sm mb-2">
-                    Deep analyze
-                    {result.llm_provider && result.llm_provider !== "none"
-                      ? ` · ${result.llm_provider}`
-                      : ""}
-                  </p>
-                  <p className="leading-relaxed">
-                    {result.deep_message ??
-                      result.deep_narrative ??
-                      "No deep analyze output."}
-                  </p>
-                  {result.deep_status === "failed" && (
-                    <p className="text-xs mt-2 opacity-80">
-                      Rule-based results below are still valid. Check{" "}
-                      <a
-                        href="/api/analyze?diag=1"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="underline"
-                      >
-                        /api/analyze?diag=1
-                      </a>{" "}
-                      and Vercel logs, then try Deep analyze again.
-                    </p>
-                  )}
-                </div>
-              )}
 
               <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
                 {rootCauses.length === 0 && (

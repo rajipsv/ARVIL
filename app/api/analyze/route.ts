@@ -1,5 +1,5 @@
 import { stripStaleDeepFields } from "@/lib/analysis-display";
-import { analyzeLog, analyzeLogDeep } from "@/lib/analyzer";
+import { analyzeLog } from "@/lib/analyzer";
 import { getLlmDiag } from "@/lib/llm-config";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import {
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       }
       logContent = fromDb;
 
-      if (!reanalyze && !deep && latest?.result_json) {
+      if (!reanalyze && latest?.result_json) {
         const raw = latest.result_json as AnalysisResult;
         if (!isLegacyAnalysis(raw)) {
           return NextResponse.json({
@@ -118,16 +118,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let result = deep
-      ? await analyzeLogDeep(logContent, workflow, sourceLabel)
-      : analyzeLog(logContent, workflow, sourceLabel);
-    if (!deep) {
-      result = stripStaleDeepFields(result);
-    }
-    const toSave =
-      result.deep_status === "skipped"
-        ? stripStaleDeepFields(result)
-        : result;
+    const result = stripStaleDeepFields(
+      analyzeLog(logContent, workflow, sourceLabel)
+    );
+    const toSave = result;
     let savedId: string | null = null;
     try {
       savedId = await saveAnalysisV2(

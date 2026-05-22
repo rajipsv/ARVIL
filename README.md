@@ -69,16 +69,11 @@ Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let th
 | `GITHUB_TOKEN` | Yes for poll (read Actions on public repos) |
 | `GITHUB_REPO` | `ROCm/TheRock` |
 | `POLL_CRON_SECRET` | Recommended |
-| `NVIDIA_API_KEY` | For **Deep analyze** (NVIDIA NIM on Vercel) |
+| `NVIDIA_API_KEY` | Optional — Python agent / future Deep analyze (disabled in web UI) |
 | `NVIDIA_MODEL` | Optional — default `meta/llama-3.1-70b-instruct` |
-| `OPENAI_API_KEY` | Optional — fallback if NVIDIA unset |
+| `OPENAI_API_KEY` | Optional — Python agent fallback |
 
-### Deep analyze (web UI)
-
-1. Add `NVIDIA_API_KEY` in Vercel → **Redeploy** (required for env to apply).
-2. Open `https://YOUR-APP.vercel.app/api/analyze?diag=1` — expect `llm_ready: true`.
-3. In the app: select a synced log → **Deep analyze** (rules first, then LLM narrative).
-4. Scheduled **poll/sync** still uses rules only (no LLM cost on cron).
+**Deep analyze (LLM in browser)** is **disabled** in the web UI. Use **Analyze** or **Re-analyze** for rule-based root-cause triage. `POST /api/analyze` with `{ deep: true }` returns 400. Ops can still check `GET /api/analyze?diag=1` for LLM env readiness.
 
 ### GitHub repo secrets (for scheduled poll)
 
@@ -112,8 +107,8 @@ python -m agentic workflow/example.log
 | Provider | Env | Used by |
 |----------|-----|---------|
 | None | — | Web UI **Analyze**, poll/sync, Python `--tool-only` |
-| NVIDIA NIM | `NVIDIA_API_KEY` | Web **Deep analyze**, Python ReAct agent |
-| OpenAI | `OPENAI_API_KEY` | Fallback for Deep analyze + Python agent |
+| NVIDIA NIM | `NVIDIA_API_KEY` | Python ReAct agent (web Deep analyze disabled) |
+| OpenAI | `OPENAI_API_KEY` | Python agent fallback |
 
 ## Security
 
