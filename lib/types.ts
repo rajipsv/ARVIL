@@ -112,4 +112,8 @@ export interface SyncedLogArtifact {
   analysis_id: string | null;
   errors_count: number | null;
   summary: string | null;
+  /** ISO timestamp of latest saved analysis (if any). */
+  analysis_at?: string | null;
+  /** Total log_analyses rows for this artifact (>1 = legacy duplicate rows before upsert). */
+  analysis_revision_count?: number;
 }

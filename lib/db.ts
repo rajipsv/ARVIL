@@ -240,53 +240,18 @@ function resolveLlmModel(result: AnalysisResult): string | null {
   return null;
 }
 
-export async function saveAnalysisV2(
-  result: AnalysisResult,
-  logContent: string,
-  artifactId?: string | null
-): Promise<string | null> {
-  const sql = getDb();
-  if (!sql) return null;
-  await ensureSchemaV2();
+function buildLogPreview(logContent: string): string {
+  return logContent.length > LOG_PREVIEW_MAX
+    ? logContent.slice(0, LOG_PREVIEW_MAX) + "\n... [truncated for storage]"
+    : logContent;
+}
 
-  const preview =
-    logContent.length > LOG_PREVIEW_MAX
-      ? logContent.slice(0, LOG_PREVIEW_MAX) + "\n... [truncated for storage]"
-      : logContent;
-
-  let artId = artifactId;
-  if (!artId) {
-    artId = await insertArtifact({
-      run_id: null,
-      ingestion_source: "manual",
-      content_preview: preview,
-      content_hash: "",
-      byte_size: logContent.length,
-      line_count: result.line_count,
-    });
-  }
-
-  const analysisMode = result.analysis_mode ?? "tool_rag";
-  const llmProvider = result.llm_provider ?? "none";
-  const llmModel = resolveLlmModel(result);
-
-  const rows = (await sql`
-    INSERT INTO log_analyses (
-      artifact_id, workflow, source_label, analysis_mode, llm_provider, llm_model,
-      line_count, errors_count, summary, log_preview, result_json
-    ) VALUES (
-      ${artId}::uuid, ${result.workflow}, ${result.source_label},
-      ${analysisMode}, ${llmProvider}, ${llmModel},
-      ${result.line_count}, ${result.errors_count},
-      ${result.summary}, ${preview}, ${JSON.stringify(result)}
-    )
-    RETURNING id::text
-  `) as { id: string }[];
-
-  const analysisId = rows[0]?.id;
-  if (!analysisId) return null;
-
-  for (const err of result.errors) {
+async function insertAnalysisErrors(
+  sql: NonNullable<ReturnType<typeof getDb>>,
+  analysisId: string,
+  errors: AnalysisResult["errors"]
+): Promise<void> {
+  for (const err of errors) {
     await sql`
       INSERT INTO analysis_errors (
         analysis_id, line_number, error_type, severity, category,
@@ -298,8 +263,96 @@ export async function saveAnalysisV2(
       )
     `;
   }
+}
 
+/** Re-analyze: update the latest analysis row for this artifact instead of inserting. */
+export async function saveOrUpdateAnalysisV2(
+  result: AnalysisResult,
+  logContent: string,
+  artifactId: string
+): Promise<string | null> {
+  const sql = getDb();
+  if (!sql) return null;
+  await ensureSchemaV2();
+
+  const preview = buildLogPreview(logContent);
+  const analysisMode = result.analysis_mode ?? "tool_rag";
+  const llmProvider = result.llm_provider ?? "none";
+  const llmModel = resolveLlmModel(result);
+
+  const existing = (await sql`
+    SELECT id::text FROM log_analyses
+    WHERE artifact_id = ${artifactId}::uuid
+    ORDER BY created_at DESC
+    LIMIT 1
+  `) as { id: string }[];
+
+  let analysisId = existing[0]?.id;
+
+  if (analysisId) {
+    await sql`
+      UPDATE log_analyses SET
+        workflow = ${result.workflow},
+        source_label = ${result.source_label},
+        analysis_mode = ${analysisMode},
+        llm_provider = ${llmProvider},
+        llm_model = ${llmModel},
+        line_count = ${result.line_count},
+        errors_count = ${result.errors_count},
+        summary = ${result.summary},
+        log_preview = ${preview},
+        result_json = ${JSON.stringify(result)}
+      WHERE id = ${analysisId}::uuid
+    `;
+    await sql`
+      DELETE FROM analysis_errors WHERE analysis_id = ${analysisId}::uuid
+    `;
+  } else {
+    const rows = (await sql`
+      INSERT INTO log_analyses (
+        artifact_id, workflow, source_label, analysis_mode, llm_provider, llm_model,
+        line_count, errors_count, summary, log_preview, result_json
+      ) VALUES (
+        ${artifactId}::uuid, ${result.workflow}, ${result.source_label},
+        ${analysisMode}, ${llmProvider}, ${llmModel},
+        ${result.line_count}, ${result.errors_count},
+        ${result.summary}, ${preview}, ${JSON.stringify(result)}
+      )
+      RETURNING id::text
+    `) as { id: string }[];
+    analysisId = rows[0]?.id;
+    if (!analysisId) return null;
+  }
+
+  await insertAnalysisErrors(sql, analysisId, result.errors);
   return analysisId;
+}
+
+export async function saveAnalysisV2(
+  result: AnalysisResult,
+  logContent: string,
+  artifactId?: string | null
+): Promise<string | null> {
+  const sql = getDb();
+  if (!sql) return null;
+  await ensureSchemaV2();
+
+  const preview = buildLogPreview(logContent);
+
+  let artId = artifactId;
+  if (!artId) {
+    artId = await insertArtifact({
+      run_id: null,
+      ingestion_source: "manual",
+      content_preview: preview,
+      content_hash: "",
+      byte_size: logContent.length,
+      line_count: result.line_count,
+    });
+    if (!artId) return null;
+  }
+
+  return saveOrUpdateAnalysisV2(result, logContent, artId);
 }
 
 export async function saveAnalysis(
@@ -417,7 +470,16 @@ export async function listIngestedArtifacts(
         SELECT la.summary FROM log_analyses la
         WHERE la.artifact_id = a.id
         ORDER BY la.created_at DESC LIMIT 1
-      ) AS summary
+      ) AS summary,
+      (
+        SELECT la.created_at::text FROM log_analyses la
+        WHERE la.artifact_id = a.id
+        ORDER BY la.created_at DESC LIMIT 1
+      ) AS analysis_at,
+      (
+        SELECT COUNT(*)::int FROM log_analyses la
+        WHERE la.artifact_id = a.id
+      ) AS analysis_revision_count
     FROM log_artifacts a
     INNER JOIN ci_runs r ON r.id = a.run_id
     LEFT JOIN ci_workflows w ON w.id = r.workflow_id

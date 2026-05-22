@@ -46,10 +46,17 @@ export async function GET(req: NextRequest) {
     }
 
     const artifacts = await listIngestedArtifacts(30, preset);
+    const uniqueRunIds = new Set(
+      artifacts.map((a) =>
+        a.github_run_id != null ? String(a.github_run_id) : a.artifact_id
+      )
+    );
     return NextResponse.json({
       artifacts,
       workflow: preset,
       category: PRESET_LABELS[preset],
+      log_count: artifacts.length,
+      unique_run_count: uniqueRunIds.size,
     });
   } catch (e) {
     console.error(e);

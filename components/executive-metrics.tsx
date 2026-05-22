@@ -131,7 +131,7 @@ export function ExecutiveMetricsView({
             {
               label: "Failures qualified",
               value: metrics.kpis.failures_qualified,
-              sub: "Automated failure qualification",
+              sub: "Distinct CI runs triaged (latest analysis per log)",
             },
             {
               label: "Known ROCm signatures",

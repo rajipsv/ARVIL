@@ -411,8 +411,8 @@ A: GFX-specific pattern packs, ASAN workflow preset, junit/ctest parsers, dashbo
 
 | KPI | Definition |
 |-----|------------|
-| Failures qualified | Distinct `log_analyses` in period |
-| Auto-triage coverage | % polled `log_artifacts` with an analysis |
+| Failures qualified | Distinct `ci_runs.github_run_id` with a latest `log_analyses` row per artifact in period (Re-analyze updates in place; legacy duplicate rows deduped in SQL) |
+| Auto-triage coverage | % polled `log_artifacts` in period that have any analysis |
 | Known-issue rate | % `analysis_errors` with `kb_pattern_id` |
 | Critical concentration | % errors with severity CRITICAL |
 | Est. hours saved | `failures_qualified × ARVIL_MANUAL_TRIAGE_MINUTES ÷ 60` (default 45 min) |
@@ -433,6 +433,38 @@ A: GFX-specific pattern packs, ASAN workflow preset, junit/ctest parsers, dashbo
 | Engineer console | QE / validation | `/` |
 | Executive dashboard | Directors / program leads | `/dashboard` |
 | Executive report | QBR / email / slides | `/report` |
+
+### Neon troubleshooting (duplicate analyses / inflated counts)
+
+Re-analyze before upsert inserted a new `log_analyses` row each time. Executive KPIs now count **distinct runs** and **latest analysis per artifact**; use these queries in the Neon SQL editor to audit legacy data:
+
+```sql
+-- A: Distinct failed runs vs analysis rows (period)
+SELECT
+  COUNT(DISTINCT r.github_run_id) AS unique_runs,
+  COUNT(DISTINCT la.id) AS analysis_rows
+FROM log_analyses la
+JOIN log_artifacts a ON a.id = la.artifact_id
+JOIN ci_runs r ON r.id = a.run_id
+WHERE la.created_at >= NOW() - INTERVAL '7 days';
+
+-- B: Artifacts with more than one analysis row (legacy Re-analyze duplicates)
+SELECT a.id::text AS artifact_id, r.github_run_id, COUNT(la.id)::int AS analysis_count
+FROM log_artifacts a
+JOIN log_analyses la ON la.artifact_id = a.id
+LEFT JOIN ci_runs r ON r.id = a.run_id
+GROUP BY a.id, r.github_run_id
+HAVING COUNT(la.id) > 1
+ORDER BY analysis_count DESC;
+
+-- C: Safe cleanup (optional): keep only latest analysis per artifact
+-- DELETE FROM log_analyses la
+-- WHERE la.id NOT IN (
+--   SELECT DISTINCT ON (artifact_id) id
+--   FROM log_analyses
+--   ORDER BY artifact_id, created_at DESC
+-- );
+```
 
 ---
 

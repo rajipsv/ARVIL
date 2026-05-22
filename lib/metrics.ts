@@ -166,10 +166,18 @@ export async function getExecutiveMetrics(
   await ensureSchemaV2();
 
   const qualifiedRows = (await sql`
-    SELECT COUNT(DISTINCT la.id)::int AS cnt
-    FROM log_analyses la
-    LEFT JOIN log_artifacts a ON a.id = la.artifact_id
-    WHERE la.created_at >= ${since}::timestamptz
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id)
+        la.id, la.artifact_id
+      FROM log_analyses la
+      WHERE la.created_at >= ${since}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
+    SELECT COUNT(DISTINCT COALESCE(r.github_run_id::text, a.id::text))::int AS cnt
+    FROM latest_la
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
+    LEFT JOIN ci_runs r ON r.id = a.run_id
   `) as { cnt: number }[];
 
   const failuresQualified = qualifiedRows[0]?.cnt ?? 0;
@@ -177,10 +185,12 @@ export async function getExecutiveMetrics(
   const coverageRows = (await sql`
     SELECT
       COUNT(DISTINCT a.id)::int AS artifacts,
-      COUNT(DISTINCT la.id)::int AS analyzed
+      COUNT(DISTINCT a.id) FILTER (
+        WHERE EXISTS (
+          SELECT 1 FROM log_analyses la WHERE la.artifact_id = a.id
+        )
+      )::int AS analyzed
     FROM log_artifacts a
-    LEFT JOIN log_analyses la ON la.artifact_id = a.id
-      AND la.created_at >= ${since}::timestamptz
     WHERE a.created_at >= ${since}::timestamptz
       AND a.ingestion_source = 'poll'
   `) as { artifacts: number; analyzed: number }[];
@@ -191,13 +201,19 @@ export async function getExecutiveMetrics(
     artifacts > 0 ? Math.round((analyzed / artifacts) * 100) : 0;
 
   const errorStats = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id) la.id
+      FROM log_analyses la
+      WHERE la.created_at >= ${since}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE ae.kb_pattern_id IS NOT NULL)::int AS known,
       COUNT(*) FILTER (WHERE ae.severity = 'CRITICAL')::int AS critical
     FROM analysis_errors ae
-    JOIN log_analyses la ON la.id = ae.analysis_id
-    WHERE la.created_at >= ${since}::timestamptz
+    JOIN latest_la ON latest_la.id = ae.analysis_id
   `) as { total: number; known: number; critical: number }[];
 
   const totalErr = errorStats[0]?.total ?? 0;
@@ -210,11 +226,20 @@ export async function getExecutiveMetrics(
     totalErr > 0 ? Math.round((criticalErr / totalErr) * 100) : 0;
 
   const workflowRows = (await sql`
-    SELECT COALESCE(r.workflow_preset, 'custom') AS preset, COUNT(DISTINCT la.id)::int AS cnt
-    FROM log_analyses la
-    JOIN log_artifacts a ON a.id = la.artifact_id
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id)
+        la.id, la.artifact_id
+      FROM log_analyses la
+      WHERE la.created_at >= ${since}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
+    SELECT COALESCE(r.workflow_preset, 'custom') AS preset,
+      COUNT(DISTINCT r.github_run_id)::int AS cnt
+    FROM latest_la
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
     JOIN ci_runs r ON r.id = a.run_id
-    WHERE la.created_at >= ${since}::timestamptz
+    WHERE r.github_run_id IS NOT NULL
     GROUP BY COALESCE(r.workflow_preset, 'custom')
     ORDER BY cnt DESC
   `) as { preset: string; cnt: number }[];
@@ -240,10 +265,16 @@ export async function getExecutiveMetrics(
   }
 
   const categoryRows = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id) la.id
+      FROM log_analyses la
+      WHERE la.created_at >= ${since}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
     SELECT COALESCE(ae.category, 'Other') AS category, COUNT(*)::int AS cnt
     FROM analysis_errors ae
-    JOIN log_analyses la ON la.id = ae.analysis_id
-    WHERE la.created_at >= ${since}::timestamptz
+    JOIN latest_la ON latest_la.id = ae.analysis_id
     GROUP BY COALESCE(ae.category, 'Other')
     ORDER BY cnt DESC
     LIMIT 5
@@ -255,17 +286,23 @@ export async function getExecutiveMetrics(
   }));
 
   const repeatRows = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id) la.id, la.artifact_id
+      FROM log_analyses la
+      WHERE la.created_at >= ${repeatSince}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
     SELECT
       ae.kb_pattern_id,
       COUNT(DISTINCT r.github_run_id)::int AS run_count,
       MAX(r.html_url) AS last_html_url,
       MAX(r.github_run_id) AS last_github_run_id
     FROM analysis_errors ae
-    JOIN log_analyses la ON la.id = ae.analysis_id
-    JOIN log_artifacts a ON a.id = la.artifact_id
+    JOIN latest_la ON latest_la.id = ae.analysis_id
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
     JOIN ci_runs r ON r.id = a.run_id
-    WHERE la.created_at >= ${repeatSince}::timestamptz
-      AND ae.kb_pattern_id IS NOT NULL
+    WHERE ae.kb_pattern_id IS NOT NULL
     GROUP BY ae.kb_pattern_id
     HAVING COUNT(DISTINCT r.github_run_id) >= 2
     ORDER BY run_count DESC
@@ -285,27 +322,43 @@ export async function getExecutiveMetrics(
   }));
 
   const trendRows = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id)
+        la.artifact_id, la.created_at
+      FROM log_analyses la
+      WHERE la.created_at >= ${sinceIso(14)}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
     SELECT
-      DATE(la.created_at AT TIME ZONE 'UTC')::text AS day,
-      COUNT(DISTINCT la.id)::int AS cnt
-    FROM log_analyses la
-    WHERE la.created_at >= ${sinceIso(14)}::timestamptz
-    GROUP BY DATE(la.created_at AT TIME ZONE 'UTC')
+      DATE(latest_la.created_at AT TIME ZONE 'UTC')::text AS day,
+      COUNT(DISTINCT COALESCE(r.github_run_id::text, a.id::text))::int AS cnt
+    FROM latest_la
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
+    LEFT JOIN ci_runs r ON r.id = a.run_id
+    GROUP BY DATE(latest_la.created_at AT TIME ZONE 'UTC')
     ORDER BY day ASC
   `) as { day: string; cnt: number }[];
 
   const daily_trend = trendRows.map((r) => ({ date: r.day, count: r.cnt }));
 
   const tqRows = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id)
+        la.id, la.artifact_id, la.created_at
+      FROM log_analyses la
+      WHERE la.created_at >= ${since}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
     SELECT
       PERCENTILE_CONT(0.5) WITHIN GROUP (
-        ORDER BY EXTRACT(EPOCH FROM (la.created_at - r.run_started_at)) / 3600.0
+        ORDER BY EXTRACT(EPOCH FROM (latest_la.created_at - r.run_started_at)) / 3600.0
       ) AS median_hours
-    FROM log_analyses la
-    JOIN log_artifacts a ON a.id = la.artifact_id
+    FROM latest_la
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
     JOIN ci_runs r ON r.id = a.run_id
-    WHERE la.created_at >= ${since}::timestamptz
-      AND r.run_started_at IS NOT NULL
+    WHERE r.run_started_at IS NOT NULL
   `) as { median_hours: number | null }[];
 
   const medianHours = tqRows[0]?.median_hours;

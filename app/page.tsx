@@ -12,7 +12,7 @@ import type {
 } from "@/lib/types";
 import { CATEGORY_PRESETS, PRESET_LABELS } from "@/lib/workflow-map";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const SAMPLE_LOG = `2024-12-10 10:15:25 ERROR [Database] Connection failed: Connection timeout after 30s
 2024-12-10 10:22:00 FATAL [Application] Out of memory error - shutting down
@@ -34,7 +34,17 @@ export default function Home() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
+  const [uniqueRunCount, setUniqueRunCount] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const listUniqueRuns = useMemo(() => {
+    const keys = new Set(
+      syncedLogs.map((a) =>
+        a.github_run_id != null ? String(a.github_run_id) : a.artifact_id
+      )
+    );
+    return keys.size;
+  }, [syncedLogs]);
 
   const applyResult = useCallback(
     (data: AnalysisResult, opts?: { fromServer?: boolean }) => {
@@ -50,6 +60,7 @@ export default function Home() {
 
   const loadCategoryData = useCallback(async () => {
     setSyncedLogs([]);
+    setUniqueRunCount(null);
     try {
       const q = encodeURIComponent(workflow);
       const [histRes, artRes] = await Promise.all([
@@ -65,12 +76,16 @@ export default function Home() {
       const artData = await artRes.json();
       if (artRes.ok && Array.isArray(artData.artifacts)) {
         setSyncedLogs(artData.artifacts as SyncedLogArtifact[]);
+        const n = artData.unique_run_count;
+        setUniqueRunCount(typeof n === "number" ? n : null);
       } else {
         setSyncedLogs([]);
+        setUniqueRunCount(null);
       }
     } catch {
       setSyncedLogs([]);
       setHistory([]);
+      setUniqueRunCount(null);
     }
   }, [workflow]);
 
@@ -351,8 +366,14 @@ export default function Home() {
               <p className="text-sm font-medium">
                 3. {categoryLabel} logs
                 <span className="text-arvil-muted font-normal ml-1">
-                  ({syncedLogs.length})
+                  ({uniqueRunCount ?? listUniqueRuns} run
+                  {(uniqueRunCount ?? listUniqueRuns) === 1 ? "" : "s"} ·{" "}
+                  {syncedLogs.length} log{syncedLogs.length === 1 ? "" : "s"})
                 </span>
+              </p>
+              <p className="text-xs text-arvil-muted">
+                One list row per ingested job log. Run count matches distinct
+                GitHub Actions runs; compare to the Actions tab for current failures.
               </p>
             </div>
 
@@ -392,6 +413,20 @@ export default function Home() {
                           {a.errors_count != null && a.errors_count > 0 && (
                             <span className="text-xs text-red-300">
                               {a.errors_count} errors
+                            </span>
+                          )}
+                          {(a.analysis_revision_count ?? 0) > 1 && (
+                            <span
+                              className="text-xs px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300"
+                              title="Multiple saved analyses for this log (legacy Re-analyze rows). New Re-analyze updates in place."
+                            >
+                              {a.analysis_revision_count} analyses
+                            </span>
+                          )}
+                          {a.analysis_at && (
+                            <span className="text-xs text-gray-500">
+                              analyzed{" "}
+                              {new Date(a.analysis_at).toLocaleDateString()}
                             </span>
                           )}
                         </div>
