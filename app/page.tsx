@@ -65,7 +65,7 @@ export default function Home() {
       const q = encodeURIComponent(workflow);
       const [histRes, artRes] = await Promise.all([
         fetch(`/api/history?workflow=${q}`),
-        fetch(`/api/artifacts?workflow=${q}`),
+        fetch(`/api/artifacts?workflow=${q}&period=7d`),
       ]);
       const histData = await histRes.json();
       if (histRes.ok) {
@@ -372,8 +372,9 @@ export default function Home() {
                 </span>
               </p>
               <p className="text-xs text-arvil-muted">
-                One list row per ingested job log. Run count matches distinct
-                GitHub Actions runs; compare to the Actions tab for current failures.
+                Last 7 days (same window as the executive dashboard). One row per
+                ingested job log; run count is distinct GitHub Actions runs with
+                triage saved in this period.
               </p>
             </div>
 

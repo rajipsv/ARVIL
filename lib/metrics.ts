@@ -2,8 +2,12 @@
  * Executive KPI aggregates for AMD / TheRock CI leadership dashboard.
  */
 
-import { ensureSchemaV2, getDb } from "./db";
-import { CATEGORY_PRESETS, PRESET_LABELS } from "./workflow-map";
+import { ensureSchemaV2, getDb, getTriagedRunsInPeriod } from "./db";
+import {
+  CATEGORY_PRESETS,
+  PRESET_LABELS,
+  resolveRunPreset,
+} from "./workflow-map";
 import type { WorkflowPreset } from "./types";
 
 export interface ExecutiveMetrics {
@@ -225,28 +229,16 @@ export async function getExecutiveMetrics(
   const criticalConcentrationPct =
     totalErr > 0 ? Math.round((criticalErr / totalErr) * 100) : 0;
 
-  const workflowRows = (await sql`
-    WITH latest_la AS (
-      SELECT DISTINCT ON (la.artifact_id)
-        la.id, la.artifact_id
-      FROM log_analyses la
-      WHERE la.created_at >= ${since}::timestamptz
-        AND la.artifact_id IS NOT NULL
-      ORDER BY la.artifact_id, la.created_at DESC
-    )
-    SELECT COALESCE(r.workflow_preset, 'custom') AS preset,
-      COUNT(DISTINCT r.github_run_id)::int AS cnt
-    FROM latest_la
-    JOIN log_artifacts a ON a.id = latest_la.artifact_id
-    JOIN ci_runs r ON r.id = a.run_id
-    WHERE r.github_run_id IS NOT NULL
-    GROUP BY COALESCE(r.workflow_preset, 'custom')
-    ORDER BY cnt DESC
-  `) as { preset: string; cnt: number }[];
+  const workflowRunRows = await getTriagedRunsInPeriod(since);
 
   const presetCounts = new Map<string, number>();
-  for (const row of workflowRows) {
-    presetCounts.set(row.preset, row.cnt);
+  for (const row of workflowRunRows) {
+    const preset = resolveRunPreset(
+      row.workflow_preset,
+      String(row.workflow_name ?? ""),
+      row.job_name
+    );
+    presetCounts.set(preset, (presetCounts.get(preset) ?? 0) + 1);
   }
 
   const workflow_breakdown = CATEGORY_PRESETS.map((preset) => ({

@@ -193,7 +193,11 @@ export function ExecutiveMetricsView({
                 : "rounded-lg border border-arvil-border bg-arvil-panel p-4"
             }
           >
-            <h2 className="text-sm font-semibold mb-3">TheRock validation streams</h2>
+            <h2 className="text-sm font-semibold mb-1">TheRock validation streams</h2>
+            <p className="text-xs text-arvil-muted mb-3">
+              Distinct triaged runs in the last {metrics.period_days} days (matches
+              engineer console when filtered to 7d).
+            </p>
             <BarChart
               items={metrics.workflow_breakdown.map((w) => ({
                 label: w.label,

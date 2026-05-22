@@ -1,9 +1,11 @@
 import {
   getArtifactDetail,
+  getTriagedRunsInPeriod,
   listIngestedArtifacts,
 } from "@/lib/db";
+import { parsePeriodDays } from "@/lib/metrics";
 import type { WorkflowPreset } from "@/lib/types";
-import { PRESET_LABELS } from "@/lib/workflow-map";
+import { PRESET_LABELS, resolveRunPreset } from "@/lib/workflow-map";
 import { NextRequest, NextResponse } from "next/server";
 
 const VALID_WORKFLOWS: WorkflowPreset[] = [
@@ -45,7 +47,21 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const artifacts = await listIngestedArtifacts(30, preset);
+    const periodDays = parsePeriodDays(req.nextUrl.searchParams.get("period"));
+    const sinceIso = new Date(
+      Date.now() - periodDays * 86400000
+    ).toISOString();
+
+    const artifacts = await listIngestedArtifacts(30, preset, { sinceIso });
+    const triagedRuns = await getTriagedRunsInPeriod(sinceIso);
+    const uniqueRunCount = triagedRuns.filter(
+      (r) =>
+        resolveRunPreset(
+          r.workflow_preset,
+          String(r.workflow_name ?? ""),
+          r.job_name
+        ) === preset
+    ).length;
     const uniqueRunIds = new Set(
       artifacts.map((a) =>
         a.github_run_id != null ? String(a.github_run_id) : a.artifact_id
@@ -55,8 +71,10 @@ export async function GET(req: NextRequest) {
       artifacts,
       workflow: preset,
       category: PRESET_LABELS[preset],
+      period_days: periodDays,
       log_count: artifacts.length,
-      unique_run_count: uniqueRunIds.size,
+      unique_run_count: uniqueRunCount,
+      unique_run_count_ingested: uniqueRunIds.size,
     });
   } catch (e) {
     console.error(e);

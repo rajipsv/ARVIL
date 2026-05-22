@@ -433,15 +433,55 @@ export async function getAnalysisById(id: string) {
   return rows[0] ?? null;
 }
 
+export type TriagedRunRow = {
+  github_run_id: number | string;
+  workflow_preset: string | null;
+  workflow_name: string | null;
+  job_name: string | null;
+};
+
+/** Distinct CI runs with a saved analysis in the period (latest analysis per artifact). */
+export async function getTriagedRunsInPeriod(
+  sinceIso: string
+): Promise<TriagedRunRow[]> {
+  const sql = getDb();
+  if (!sql) return [];
+  await ensureSchemaV2();
+
+  return (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id)
+        la.id, la.artifact_id, la.created_at
+      FROM log_analyses la
+      WHERE la.created_at >= ${sinceIso}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    )
+    SELECT DISTINCT ON (r.github_run_id)
+      r.github_run_id,
+      r.workflow_preset,
+      w.workflow_name,
+      a.job_name
+    FROM latest_la
+    JOIN log_artifacts a ON a.id = latest_la.artifact_id
+    JOIN ci_runs r ON r.id = a.run_id
+    LEFT JOIN ci_workflows w ON w.id = r.workflow_id
+    WHERE r.github_run_id IS NOT NULL
+    ORDER BY r.github_run_id, latest_la.created_at DESC
+  `) as TriagedRunRow[];
+}
+
 export async function listIngestedArtifacts(
   limit = 40,
-  preset?: WorkflowPreset
+  preset?: WorkflowPreset,
+  options?: { sinceIso?: string | null }
 ) {
   const sql = getDb();
   if (!sql) return [];
   await ensureSchemaV2();
 
   const fetchLimit = preset && preset !== "custom" ? limit * 3 : limit;
+  const sinceIso = options?.sinceIso ?? null;
 
   const rows = (await sql`
     SELECT
@@ -484,6 +524,7 @@ export async function listIngestedArtifacts(
     INNER JOIN ci_runs r ON r.id = a.run_id
     LEFT JOIN ci_workflows w ON w.id = r.workflow_id
     WHERE a.ingestion_source = 'poll'
+      AND (${sinceIso}::timestamptz IS NULL OR a.created_at >= ${sinceIso}::timestamptz)
     ORDER BY a.created_at DESC
     LIMIT ${fetchLimit}
   `) as Array<Record<string, unknown>>;

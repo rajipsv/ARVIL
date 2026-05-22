@@ -76,3 +76,22 @@ export function presetMatchesWorkflowName(
   if (preset === "custom") return true;
   return workflowNameToPreset(workflowName, workflowPath) === preset;
 }
+
+/**
+ * Bucket a CI run for executive charts — prefer stored preset, else infer from
+ * workflow/job names (same rules as the engineer log list).
+ */
+export function resolveRunPreset(
+  stored: string | null | undefined,
+  workflowName: string,
+  jobName?: string | null
+): WorkflowPreset {
+  if (
+    stored &&
+    (CATEGORY_PRESETS as readonly string[]).includes(stored)
+  ) {
+    return stored as WorkflowPreset;
+  }
+  const hint = `${workflowName} ${jobName ?? ""}`.trim();
+  return workflowNameToPreset(hint || "unknown");
+}
