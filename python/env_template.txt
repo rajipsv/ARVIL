@@ -8,7 +8,7 @@ ARVIL_DISABLE_EMBEDDINGS=1
 # RAG pipeline (python -m rag) — Gemini by default
 GOOGLE_API_KEY=
 # ARVIL_LLM_PROVIDER=google        # google | openai
-# ARVIL_LLM_MODEL=gemini-2.5-flash
+# ARVIL_LLM_MODEL=gemini-3.8-flash
 # ARVIL_EMBED_MODEL=models/gemini-embedding-001
 # ARVIL_MIN_COSINE=0.6             # FAISS-only acceptance threshold; tune with the eval set
 # ARVIL_LLM_RPM=10                 # free-tier rate limit

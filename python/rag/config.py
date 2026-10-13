@@ -10,9 +10,10 @@ from dotenv import load_dotenv
 
 PYTHON_DIR = Path(__file__).resolve().parents[1]
 load_dotenv(PYTHON_DIR / ".env")
+load_dotenv(PYTHON_DIR.parent / ".env")  # repo-root .env as a fallback
 
 DEFAULT_MODELS = {
-    "google": ("gemini-2.5-flash", "models/gemini-embedding-001"),
+    "google": ("gemini-3.8-flash", "models/gemini-embedding-001"),
     "openai": ("gpt-4o-mini", "text-embedding-3-small"),
 }
 
