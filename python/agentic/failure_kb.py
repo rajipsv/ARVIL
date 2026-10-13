@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rag.knowledge import keyword_score, load_patterns, pattern_document
+
 DEFAULT_KB_DIR = Path(__file__).parent / "knowledge"
 PATTERNS_FILE = "patterns.json"
 RESOLUTIONS_FILE = "resolutions.jsonl"
@@ -65,11 +67,8 @@ class FailureKnowledgeBase:
         self._maybe_init_embeddings()
 
     def _load_patterns(self) -> None:
-        path = self.kb_dir / PATTERNS_FILE
-        if path.is_file():
-            self.patterns = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            self.patterns = []
+        # Shared lib/data/patterns.json is the source of truth; the local file only adds ids it lacks.
+        self.patterns = load_patterns(extra_file=self.kb_dir / PATTERNS_FILE)
 
     def _load_resolutions(self) -> None:
         path = self.kb_dir / RESOLUTIONS_FILE
@@ -127,32 +126,10 @@ class FailureKnowledgeBase:
 
     @staticmethod
     def _pattern_document(p: dict) -> str:
-        return (
-            f"Pattern: {p.get('pattern', '')}\n"
-            f"Category: {p.get('category', '')}\n"
-            f"Severity: {p.get('severity', '')}\n"
-            f"Signatures: {', '.join(p.get('signatures', []))}\n"
-            f"Causes: {p.get('causes', '')}\n"
-            f"Solutions: {p.get('solutions', '')}\n"
-            f"Similar: {p.get('similar_errors', '')}"
-        )
+        return pattern_document(p)
 
     def _keyword_score(self, query: str, p: dict) -> float:
-        q = query.lower()
-        tokens = set(re.findall(r"[a-z0-9_./-]+", q))
-        score = 0.0
-        for sig in p.get("signatures", []):
-            s = sig.lower()
-            if s in q:
-                score += 15.0
-            elif any(t in s or s in t for t in tokens if len(t) > 3):
-                score += 5.0
-        blob = self._pattern_document(p).lower()
-        overlap = sum(1 for t in tokens if len(t) > 3 and t in blob)
-        score += overlap * 1.5
-        if p.get("pattern", "").lower() in q:
-            score += 8.0
-        return score
+        return keyword_score(query, p)
 
     def _search_resolutions(self, query: str, top_k: int) -> list[FailureMatch]:
         matches: list[FailureMatch] = []

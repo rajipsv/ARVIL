@@ -29,6 +29,10 @@ agentic_report.txt
 analysis_results.json
 error_report.txt
 python/workflow/faiss_index/
+python/agentic/knowledge/faiss_index/
+python/rag/.cache/
+rag_results.json
+rag_runs.jsonl
 
 # Neon local
 .vercel
