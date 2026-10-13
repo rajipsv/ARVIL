@@ -3,7 +3,7 @@ import {
   getTriagedRunsInPeriod,
   listIngestedArtifacts,
 } from "@/lib/db";
-import { parsePeriodDays } from "@/lib/metrics";
+import { parsePeriodDays } from "@/lib/period";
 import type { WorkflowPreset } from "@/lib/types";
 import { PRESET_LABELS, resolveRunPreset } from "@/lib/workflow-map";
 import { NextRequest, NextResponse } from "next/server";

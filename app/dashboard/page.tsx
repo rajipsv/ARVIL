@@ -2,10 +2,11 @@
 
 import { ExecutiveMetricsView, PeriodToggle } from "@/components/executive-metrics";
 import type { ExecutiveMetrics } from "@/lib/metrics";
+import type { PeriodKey } from "@/lib/period";
 import { useCallback, useEffect, useState } from "react";
 
 export default function DashboardPage() {
-  const [period, setPeriod] = useState<"7d" | "30d">("7d");
+  const [period, setPeriod] = useState<PeriodKey>("7d");
   const [metrics, setMetrics] = useState<ExecutiveMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

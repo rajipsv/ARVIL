@@ -10,6 +10,8 @@ import type {
   SyncedLogArtifact,
   WorkflowPreset,
 } from "@/lib/types";
+import { PeriodToggle } from "@/components/executive-metrics";
+import { ALL_TIME_DAYS, periodHeading, parsePeriodDays, type PeriodKey } from "@/lib/period";
 import { CATEGORY_PRESETS, PRESET_LABELS } from "@/lib/workflow-map";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -35,6 +37,7 @@ export default function Home() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
   const [uniqueRunCount, setUniqueRunCount] = useState<number | null>(null);
+  const [period, setPeriod] = useState<PeriodKey>("7d");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const listUniqueRuns = useMemo(() => {
@@ -65,7 +68,7 @@ export default function Home() {
       const q = encodeURIComponent(workflow);
       const [histRes, artRes] = await Promise.all([
         fetch(`/api/history?workflow=${q}`),
-        fetch(`/api/artifacts?workflow=${q}&period=7d`),
+        fetch(`/api/artifacts?workflow=${q}&period=${period}`),
       ]);
       const histData = await histRes.json();
       if (histRes.ok) {
@@ -87,7 +90,7 @@ export default function Home() {
       setHistory([]);
       setUniqueRunCount(null);
     }
-  }, [workflow]);
+  }, [workflow, period]);
 
   useEffect(() => {
     if (
@@ -371,18 +374,21 @@ export default function Home() {
                   {syncedLogs.length} log{syncedLogs.length === 1 ? "" : "s"})
                 </span>
               </p>
-              <p className="text-xs text-arvil-muted">
-                Last 7 days (same window as the executive dashboard). One row per
-                ingested job log; run count is distinct GitHub Actions runs with
-                triage saved in this period.
-              </p>
+              <PeriodToggle period={period} onChange={setPeriod} />
             </div>
+            <p className="text-xs text-arvil-muted">
+              {periodHeading(parsePeriodDays(period))}. One row per ingested job log
+              (newest 30 shown); run count is distinct GitHub Actions runs with
+              triage saved in this period.
+            </p>
 
             {syncedLogs.length === 0 ? (
               <div className="text-center py-8 px-4 rounded-lg border border-dashed border-arvil-border">
                 <p className="text-sm text-gray-400">
                   No <strong className="text-orange-300">{categoryLabel}</strong> logs
-                  in Neon yet.
+                  {parsePeriodDays(period) >= ALL_TIME_DAYS
+                    ? " in Neon yet."
+                    : " in this period. Try a longer period or All time."}
                 </p>
                 <p className="text-xs text-arvil-muted mt-2">
                   Sync this category above. Only {categoryLabel} failures are stored

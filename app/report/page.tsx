@@ -2,12 +2,13 @@
 
 import { ExecutiveMetricsView } from "@/components/executive-metrics";
 import type { ExecutiveMetrics } from "@/lib/metrics";
+import { normalizePeriodKey } from "@/lib/period";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useState } from "react";
 
 function ReportContent() {
   const searchParams = useSearchParams();
-  const periodParam = searchParams.get("period") === "30d" ? "30d" : "7d";
+  const periodParam = normalizePeriodKey(searchParams.get("period"));
   const [metrics, setMetrics] = useState<ExecutiveMetrics | null>(null);
   const [loading, setLoading] = useState(true);
 

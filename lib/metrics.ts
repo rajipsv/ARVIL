@@ -8,10 +8,15 @@ import {
   PRESET_LABELS,
   resolveRunPreset,
 } from "./workflow-map";
+import { parsePeriodDays, periodPhrase } from "./period";
 import type { WorkflowPreset } from "./types";
+
+export { parsePeriodDays };
 
 export interface ExecutiveMetrics {
   period_days: number;
+  /** Window covered by daily_trend; at least 14 days. */
+  trend_days: number;
   generated_at: string;
   demo_mode: boolean;
   assumptions: {
@@ -54,6 +59,7 @@ export function getDemoExecutiveMetrics(periodDays: number): ExecutiveMetrics {
   const qualified = 24;
   return {
     period_days: periodDays,
+    trend_days: 14,
     generated_at: new Date().toISOString(),
     demo_mode: true,
     assumptions: {
@@ -128,7 +134,7 @@ function buildExecutiveSummary(m: Omit<ExecutiveMetrics, "executive_summary">): 
     const top = [...workflow_breakdown].sort((a, b) => b.count - a.count)[0];
     const pct = Math.round((top.count / totalWf) * 100);
     bullets.push(
-      `${top.label} accounted for ${pct}% of qualified failures (${top.count} of ${totalWf}) in the last ${m.period_days} days.`
+      `${top.label} accounted for ${pct}% of qualified failures (${top.count} of ${totalWf}) in ${periodPhrase(m.period_days)}.`
     );
   }
 
@@ -162,6 +168,7 @@ export async function getExecutiveMetrics(
   const mins = manualTriageMinutes();
   const since = sinceIso(periodDays);
   const repeatSince = sinceIso(Math.max(periodDays, 14));
+  const trendDays = Math.max(periodDays, 14);
 
   if (!sql) {
     return getDemoExecutiveMetrics(periodDays);
@@ -318,7 +325,7 @@ export async function getExecutiveMetrics(
       SELECT DISTINCT ON (la.artifact_id)
         la.artifact_id, la.created_at
       FROM log_analyses la
-      WHERE la.created_at >= ${sinceIso(14)}::timestamptz
+      WHERE la.created_at >= ${sinceIso(trendDays)}::timestamptz
         AND la.artifact_id IS NOT NULL
       ORDER BY la.artifact_id, la.created_at DESC
     )
@@ -365,6 +372,7 @@ export async function getExecutiveMetrics(
 
   const base: Omit<ExecutiveMetrics, "executive_summary"> = {
     period_days: periodDays,
+    trend_days: trendDays,
     generated_at: new Date().toISOString(),
     demo_mode: false,
     assumptions: {
@@ -390,9 +398,4 @@ export async function getExecutiveMetrics(
     ...base,
     executive_summary: buildExecutiveSummary(base),
   };
-}
-
-export function parsePeriodDays(param: string | null): number {
-  if (param === "30d" || param === "30") return 30;
-  return 7;
 }

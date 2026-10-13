@@ -1,6 +1,14 @@
 "use client";
 
 import type { ExecutiveMetrics } from "@/lib/metrics";
+import {
+  PERIOD_KEYS,
+  periodButtonLabel,
+  periodHeading,
+  periodKeyFromDays,
+  periodPhrase,
+  type PeriodKey,
+} from "@/lib/period";
 import Link from "next/link";
 
 function BarChart({
@@ -102,7 +110,7 @@ export function ExecutiveMetricsView({
                 </span>
               </h1>
               <p className={`text-sm mt-1 ${printMode ? "text-gray-600" : "text-arvil-muted"}`}>
-                TheRock CI — ROCm/TheRock GitHub Actions · Last {metrics.period_days} days
+                TheRock CI — ROCm/TheRock GitHub Actions · {periodHeading(metrics.period_days)}
               </p>
               {metrics.demo_mode && (
                 <p className="text-xs text-amber-600 mt-1">Demo data (DATABASE_URL not configured)</p>
@@ -114,7 +122,7 @@ export function ExecutiveMetricsView({
                   Engineer console
                 </Link>
                 <Link
-                  href={`/report?period=${metrics.period_days === 30 ? "30d" : "7d"}`}
+                  href={`/report?period=${periodKeyFromDays(metrics.period_days)}`}
                   className="text-arvil-accent hover:underline"
                 >
                   Print report
@@ -195,8 +203,8 @@ export function ExecutiveMetricsView({
           >
             <h2 className="text-sm font-semibold mb-1">TheRock validation streams</h2>
             <p className="text-xs text-arvil-muted mb-3">
-              Distinct triaged runs in the last {metrics.period_days} days (matches
-              engineer console when filtered to 7d).
+              Distinct triaged runs in {periodPhrase(metrics.period_days)} (matches
+              the engineer console for the same period).
             </p>
             <BarChart
               items={metrics.workflow_breakdown.map((w) => ({
@@ -233,7 +241,7 @@ export function ExecutiveMetricsView({
                 : "rounded-lg border border-arvil-border bg-arvil-panel p-4"
             }
           >
-            <h2 className="text-sm font-semibold mb-3">Qualified failures trend (14d)</h2>
+            <h2 className="text-sm font-semibold mb-3">Qualified failures trend ({periodHeading(metrics.trend_days ?? 14).toLowerCase()})</h2>
             <TrendSparkline points={metrics.daily_trend} />
           </section>
 
@@ -337,12 +345,12 @@ export function PeriodToggle({
   period,
   onChange,
 }: {
-  period: "7d" | "30d";
-  onChange: (p: "7d" | "30d") => void;
+  period: PeriodKey;
+  onChange: (p: PeriodKey) => void;
 }) {
   return (
-    <div className="flex gap-2">
-      {(["7d", "30d"] as const).map((p) => (
+    <div className="flex flex-wrap gap-2">
+      {PERIOD_KEYS.map((p) => (
         <button
           key={p}
           type="button"
@@ -353,7 +361,7 @@ export function PeriodToggle({
               : "border-arvil-border text-arvil-muted hover:text-white"
           }`}
         >
-          {p === "7d" ? "7 days" : "30 days"}
+          {periodButtonLabel(p)}
         </button>
       ))}
     </div>
