@@ -1,7 +1,7 @@
 # ARVIL RAG pipeline
 
 Retrieval-augmented triage for CI logs, built with **LangChain** and a **FAISS** vector store.
-It runs from the command line; the deployed web app does not use it.
+It runs from the command line, or as an HTTP service that powers **Deep analyze** in the web console.
 
 ## Pipeline
 
@@ -57,8 +57,26 @@ python -m pytest tests -q
 
 The tests are offline: a hashing embedding stands in for Gemini and a stub stands in for the LLM.
 
+## HTTP service
+
+```bash
+uvicorn rag.server:app --port 8000      # from python/
+```
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Provider, models, pattern count, whether the FAISS index is ready |
+| `POST /triage` | `{"log": "...", "max_causes": 3, "use_llm": true}` → triage results with retrieved patterns and scores |
+
+Set `ARVIL_RAG_SECRET` to require `Authorization: Bearer <secret>`. If the LLM call fails
+(for example a free-tier rate limit), `/triage` falls back to retrieval-only answers and
+reports `llm_error`. The FAISS index is built once at startup.
+
+On Vercel the same app is exposed as a Python function at `/api/rag`
+([api/rag.py](../../api/rag.py)). The FAISS index ships prebuilt in `rag/index/`; refresh it
+after changing the patterns with `python -m rag --export-index`.
+
 ## Not done yet
 
 - No evaluation set or accuracy numbers. `ARVIL_MIN_COSINE` (default 0.6) is a placeholder
   until it is tuned on labelled cases.
-- Not wired into the web app.

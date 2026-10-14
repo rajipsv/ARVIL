@@ -29,7 +29,9 @@ def build_retriever(
     store = None
     if mode != "keyword":
         embeddings = embeddings or make_embeddings(settings)
-        store = build_or_load_index(patterns, embeddings, settings.embed_model, settings.cache_dir)
+        store = build_or_load_index(
+            patterns, embeddings, settings.embed_model, settings.cache_dir, settings.index_dir
+        )
     return HybridRetriever(patterns, store=store, mode=mode, min_cosine=settings.min_cosine)
 
 

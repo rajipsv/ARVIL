@@ -1,0 +1,9 @@
+# Python dependencies for the Vercel function api/rag.py (FAISS RAG triage).
+# The Next.js app does not use this file. Full CLI/agent deps: python/requirements.txt
+fastapi>=0.110.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-google-genai>=2.0.0
+faiss-cpu>=1.7.4
+pydantic>=2.0.0
+python-dotenv>=1.0.0

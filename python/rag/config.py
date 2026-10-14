@@ -34,6 +34,8 @@ class Settings:
     min_cosine: float
     requests_per_minute: float
     cache_dir: Path
+    # Read-only FAISS indexes committed with the code (checked before cache_dir).
+    index_dir: Path | None = None
 
     @property
     def has_key(self) -> bool:
@@ -52,5 +54,13 @@ def get_settings() -> Settings:
         api_key=_api_key(provider),
         min_cosine=float(os.getenv("ARVIL_MIN_COSINE", "0.6")),
         requests_per_minute=float(os.getenv("ARVIL_LLM_RPM", "10")),
-        cache_dir=Path(os.getenv("ARVIL_RAG_CACHE_DIR", "") or PYTHON_DIR / "rag" / ".cache"),
+        cache_dir=Path(os.getenv("ARVIL_RAG_CACHE_DIR", "") or _default_cache_dir()),
+        index_dir=PYTHON_DIR / "rag" / "index",
     )
+
+
+def _default_cache_dir() -> Path:
+    # Serverless filesystems are read-only except /tmp.
+    if os.getenv("VERCEL"):
+        return Path("/tmp/arvil-rag")
+    return PYTHON_DIR / "rag" / ".cache"

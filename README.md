@@ -69,11 +69,19 @@ Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let th
 | `GITHUB_TOKEN` | Yes for poll (read Actions on public repos) |
 | `GITHUB_REPO` | `ROCm/TheRock` |
 | `POLL_CRON_SECRET` | Recommended |
-| `NVIDIA_API_KEY` | Optional — Python agent / future Deep analyze (disabled in web UI) |
+| `GOOGLE_API_KEY` | Optional — Gemini key for **Deep analyze (FAISS)** (`api/rag.py`) |
+| `ARVIL_RAG_SECRET` | Optional — lets non-browser clients call `/api/rag` with `Authorization: Bearer` |
+| `NVIDIA_API_KEY` | Optional — Python agent |
 | `NVIDIA_MODEL` | Optional — default `meta/llama-3.1-70b-instruct` |
 | `OPENAI_API_KEY` | Optional — Python agent fallback |
 
-**Deep analyze (LLM in browser)** is **disabled** in the web UI. Use **Analyze** or **Re-analyze** for rule-based root-cause triage. `POST /api/analyze` with `{ deep: true }` returns 400. Ops can still check `GET /api/analyze?diag=1` for LLM env readiness.
+**Analyze / Re-analyze** is rule-based (keyword knowledge-base match, no LLM) and is what sync uses.
+
+**Deep analyze (FAISS)** is on demand: the console calls `POST /api/rag`, a Vercel **Python** function ([api/rag.py](api/rag.py)) in the same deployment. It runs the `python/rag` pipeline: FAISS + keyword retrieval over the knowledge base, then a Gemini explanation. If Gemini fails or is rate-limited it returns retrieval-only answers. `GET /api/rag` reports health.
+
+- The FAISS index ships prebuilt in `python/rag/index/`, so cold starts don't re-embed the patterns. After editing `lib/data/patterns.json`, run `python -m rag --export-index` (from `python/`) and commit the result.
+- Set `GOOGLE_API_KEY` in Vercel (Production and Preview); it embeds each query and generates explanations.
+- Dependencies for the function are in the root [requirements.txt](requirements.txt); [vercel.json](vercel.json) sets its files and 60 s limit.
 
 ### GitHub repo secrets (for scheduled poll)
 

@@ -117,3 +117,39 @@ export interface SyncedLogArtifact {
   /** Total log_analyses rows for this artifact (>1 = legacy duplicate rows before upsert). */
   analysis_revision_count?: number;
 }
+
+/** Response from the Python RAG service (FAISS + Gemini) via /api/deep-analyze. */
+export interface DeepRetrievedPattern {
+  pattern_id: string;
+  pattern: string;
+  category: string;
+  severity: string;
+  rrf_score: number;
+  keyword_score: number;
+  cosine: number | null;
+  sources: string[];
+}
+
+export interface DeepTriageResult {
+  error_line: number;
+  error_message: string;
+  evidence_lines: number[];
+  pattern_id: string | null;
+  category: string;
+  severity: string;
+  root_cause: string;
+  recommendation: string;
+  confidence: number;
+  mode: "rag" | "no_match" | "no_rag" | "retrieval_only";
+  retrieved: DeepRetrievedPattern[];
+}
+
+export interface DeepTriageResponse {
+  results: DeepTriageResult[];
+  retriever: string;
+  embed_model: string;
+  chat_model: string | null;
+  llm_used: boolean;
+  llm_error: string | null;
+  latency_ms: number;
+}

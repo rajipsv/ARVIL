@@ -26,9 +26,35 @@ def main() -> None:
     parser.add_argument("-o", "--output", default="rag_results.json")
     parser.add_argument("--run-log", default="rag_runs.jsonl", help="Per-request JSONL log")
     parser.add_argument("--build-index", action="store_true", help="Build the FAISS index and exit")
+    parser.add_argument(
+        "--export-index",
+        action="store_true",
+        help="Build the FAISS index into rag/index/ so it ships with the code (used on Vercel)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
+
+    if args.export_index:
+        import dataclasses
+
+        from .index import build_or_load_index, index_key, make_embeddings
+        from .knowledge import load_patterns
+
+        patterns = load_patterns()
+        out = settings.index_dir / index_key(patterns, settings.embed_model)
+        if (out / "index.faiss").is_file():
+            print(f"Up to date: {out}")
+            return
+        # Write straight into rag/index/<key> by using it as a one-off cache root.
+        tmp = dataclasses.replace(settings, cache_dir=settings.index_dir / ".build")
+        build_or_load_index(patterns, make_embeddings(tmp), settings.embed_model, tmp.cache_dir)
+        (tmp.cache_dir / "faiss" / out.name).rename(out)
+        import shutil
+
+        shutil.rmtree(tmp.cache_dir, ignore_errors=True)
+        print(f"Exported FAISS index for {len(patterns)} patterns to {out}")
+        return
 
     if args.build_index:
         retriever = build_retriever(settings, "faiss")

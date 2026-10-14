@@ -202,3 +202,16 @@ def test_retrieval_only_and_no_rag_modes(hybrid, tmp_path):
 
     base = analyze_log(GIT_DIFF_LOG, settings=_settings(tmp_path), use_rag=False, generate=generate)
     assert base[0].mode == "no_rag" and base[0].retrieved == []
+
+
+def test_prebuilt_index_is_used_before_building(patterns, tmp_path):
+    prebuilt = tmp_path / "prebuilt"
+    build_or_load_index(patterns, HashEmbeddings(), "hash-test", prebuilt.parent / "seed")
+    # Move the seeded index into the prebuilt layout: <prebuilt>/<key>/index.faiss
+    seeded = next((tmp_path / "seed" / "faiss").iterdir())
+    prebuilt.mkdir()
+    seeded.rename(prebuilt / seeded.name)
+
+    emb = HashEmbeddings()
+    build_or_load_index(patterns, emb, "hash-test", tmp_path / "cache", prebuilt)
+    assert emb.calls == 0  # loaded from the committed index, nothing re-embedded

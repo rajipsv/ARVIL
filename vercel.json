@@ -1,3 +1,10 @@
 {
-  "framework": "nextjs"
+  "framework": "nextjs",
+  "functions": {
+    "api/rag.py": {
+      "maxDuration": 60,
+      "includeFiles": "{python/rag/**,lib/data/patterns.json}",
+      "excludeFiles": "{node_modules/**,.next/**,python/.venv/**,python/rag/.cache/**,python/agentic/**,python/workflow/**,python/simple/**,python/tests/**}"
+    }
+  }
 }

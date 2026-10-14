@@ -5,6 +5,7 @@ import { stripStaleDeepFields } from "@/lib/analysis-display";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import type {
   AnalysisResult,
+  DeepTriageResponse,
   HistoryItem,
   RootCauseGroup,
   SyncedLogArtifact,
@@ -38,6 +39,9 @@ export default function Home() {
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
   const [uniqueRunCount, setUniqueRunCount] = useState<number | null>(null);
   const [period, setPeriod] = useState<PeriodKey>("7d");
+  const [deep, setDeep] = useState<DeepTriageResponse | null>(null);
+  const [deepLoading, setDeepLoading] = useState(false);
+  const [deepError, setDeepError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const listUniqueRuns = useMemo(() => {
@@ -248,6 +252,44 @@ export default function Home() {
     },
     [logContent, workflow, fileName, selectedArtifactId, loadCategoryData, applyResult]
   );
+
+  // A new rule-based result invalidates any deep analysis shown for the previous one.
+  useEffect(() => {
+    setDeep(null);
+    setDeepError(null);
+  }, [result]);
+
+  const runDeepAnalyze = useCallback(async () => {
+    // Synced logs are loaded into logContent when selected, so both paths send text.
+    if (!logContent.trim()) {
+      setDeepError("No log text loaded. Select a synced log or paste one first.");
+      return;
+    }
+    setDeepLoading(true);
+    setDeepError(null);
+    try {
+      // Python function in this deployment (api/rag.py): FAISS + keyword retrieval, Gemini.
+      const res = await fetch("/api/rag", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          log: logContent.slice(0, 2_000_000),
+          max_causes: 3,
+          source: (fileName ?? "paste").slice(0, 200),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+        throw new Error(`Deep analyze failed (HTTP ${res.status}): ${detail}`);
+      }
+      setDeep(data as DeepTriageResponse);
+    } catch (err) {
+      setDeepError(err instanceof Error ? err.message : "Deep analyze failed");
+    } finally {
+      setDeepLoading(false);
+    }
+  }, [logContent, fileName]);
 
   const downloadJson = () => {
     if (!result) return;
@@ -573,7 +615,7 @@ export default function Home() {
 
           {loading && (
             <div className="rounded-lg border border-arvil-border bg-arvil-panel p-8 text-center text-arvil-muted animate-pulse">
-              Running grep + RAG on failure region…
+              Running grep + knowledge-base match on failure region…
             </div>
           )}
 
@@ -582,13 +624,24 @@ export default function Home() {
               <div className="rounded-lg border border-arvil-border bg-arvil-panel p-4">
                 <div className="flex justify-between items-start gap-2">
                   <h2 className="font-semibold text-lg">Summary</h2>
-                  <button
-                    type="button"
-                    onClick={downloadJson}
-                    className="text-xs px-2 py-1 rounded border border-arvil-border hover:border-arvil-accent"
-                  >
-                    Download JSON
-                  </button>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={runDeepAnalyze}
+                      disabled={deepLoading}
+                      title="FAISS + keyword retrieval over the knowledge base, explained by Gemini"
+                      className="text-xs px-2 py-1 rounded border border-arvil-accent text-orange-200 hover:bg-orange-950/40 disabled:opacity-50"
+                    >
+                      {deepLoading ? "Deep analyzing…" : "Deep analyze (FAISS)"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadJson}
+                      className="text-xs px-2 py-1 rounded border border-arvil-border hover:border-arvil-accent"
+                    >
+                      Download JSON
+                    </button>
+                  </div>
                 </div>
                 <p className="text-sm mt-2 text-gray-300">{result.summary}</p>
                 {analysisUpgraded && (
@@ -694,10 +747,14 @@ export default function Home() {
                 ))}
               </div>
 
+              {(deepLoading || deepError || deep) && (
+                <DeepAnalysisPanel deep={deep} loading={deepLoading} error={deepError} />
+              )}
+
               {result.rag_lookups.length > 0 && (
                 <details className="rounded-lg border border-arvil-border bg-arvil-panel p-4">
                   <summary className="cursor-pointer text-sm font-medium">
-                    RAG knowledge matches ({result.rag_lookups.length})
+                    Knowledge-base matches, keyword ({result.rag_lookups.length})
                   </summary>
                   <pre className="mt-3 text-xs font-mono text-arvil-muted overflow-x-auto whitespace-pre-wrap">
                     {JSON.stringify(result.rag_lookups, null, 2)}
@@ -714,5 +771,86 @@ export default function Home() {
         <code className="text-orange-400">cd python && python -m agentic</code>
       </footer>
     </main>
+  );
+}
+
+function DeepAnalysisPanel({
+  deep,
+  loading,
+  error,
+}: {
+  deep: DeepTriageResponse | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="rounded-lg border border-orange-900/60 bg-arvil-panel p-4 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-semibold">Deep analyze — FAISS retrieval</h2>
+        {deep && (
+          <span className="text-xs text-arvil-muted">
+            {deep.retriever} retrieval · {deep.embed_model}
+            {deep.llm_used && deep.chat_model ? ` · ${deep.chat_model}` : " · no LLM"} ·{" "}
+            {(deep.latency_ms / 1000).toFixed(1)}s
+          </span>
+        )}
+      </div>
+      {loading && (
+        <p className="text-sm text-arvil-muted animate-pulse">
+          Running FAISS retrieval… the first call after a while takes longer (cold start).
+        </p>
+      )}
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      {deep?.llm_error && (
+        <p className="text-xs text-amber-300/90">
+          LLM unavailable ({deep.llm_error.slice(0, 120)}); showing retrieval-only answers.
+        </p>
+      )}
+      {deep && deep.results.length === 0 && (
+        <p className="text-sm text-arvil-muted">No root causes found in this log.</p>
+      )}
+      {deep?.results.map((r) => (
+        <article key={r.error_line} className="rounded border border-arvil-border p-3 text-sm space-y-2">
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="font-mono text-arvil-muted">L{r.error_line}</span>
+            <span className="px-2 py-0.5 rounded bg-arvil-bg">{r.mode.replace("_", " ")}</span>
+            <span className="px-2 py-0.5 rounded bg-arvil-bg">{r.severity}</span>
+            {r.pattern_id ? (
+              <span className="px-2 py-0.5 rounded bg-orange-950 text-orange-300">KB: {r.pattern_id}</span>
+            ) : (
+              <span className="px-2 py-0.5 rounded bg-arvil-bg text-arvil-muted">no known pattern</span>
+            )}
+            {r.mode === "rag" && (
+              <span className="text-arvil-muted">confidence {Math.round(r.confidence * 100)}%</span>
+            )}
+          </div>
+          <p className="font-mono text-xs text-gray-400 break-all">{r.error_message}</p>
+          {r.mode === "rag" && <p className="text-gray-200 text-xs">{r.root_cause}</p>}
+          <p className="text-green-300/90 text-xs">{r.recommendation}</p>
+          {r.retrieved.length > 0 && (
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-arvil-muted">
+                  <th className="font-normal pb-1">Retrieved pattern</th>
+                  <th className="font-normal pb-1">Cosine (FAISS)</th>
+                  <th className="font-normal pb-1">Keyword</th>
+                  <th className="font-normal pb-1">Found by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.retrieved.map((m) => (
+                  <tr key={m.pattern_id} className="border-t border-arvil-border/50">
+                    <td className="py-1 font-mono text-orange-300">{m.pattern_id}</td>
+                    <td className="py-1">{m.cosine != null ? m.cosine.toFixed(3) : "—"}</td>
+                    <td className="py-1">{m.keyword_score}</td>
+                    <td className="py-1">{m.sources.join(" + ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </article>
+      ))}
+    </div>
   );
 }

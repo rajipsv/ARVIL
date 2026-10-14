@@ -29,7 +29,7 @@ def make_embeddings(settings: Settings) -> Embeddings:
     return OpenAIEmbeddings(model=settings.embed_model, api_key=settings.api_key)
 
 
-def _index_key(patterns: list[dict], embed_model: str) -> str:
+def index_key(patterns: list[dict], embed_model: str) -> str:
     blob = json.dumps(patterns, sort_keys=True) + "|" + embed_model
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -39,15 +39,23 @@ def build_or_load_index(
     embeddings: Embeddings,
     embed_model: str,
     cache_dir: Path | None,
+    prebuilt_dir: Path | None = None,
 ) -> FAISS:
-    """Embed patterns once; the index is rebuilt only when patterns or the model change."""
-    index_dir = None
-    if cache_dir is not None:
-        index_dir = Path(cache_dir) / "faiss" / _index_key(patterns, embed_model)
-        if (index_dir / "index.faiss").is_file():
+    """
+    Embed patterns once; the index is rebuilt only when patterns or the model change.
+    A matching index under prebuilt_dir (committed with the code) is used first, so a
+    serverless cold start does not re-embed the knowledge base.
+    """
+    key = index_key(patterns, embed_model)
+    candidates = [Path(d) / key for d in (prebuilt_dir,) if d is not None]
+    index_dir = Path(cache_dir) / "faiss" / key if cache_dir is not None else None
+    if index_dir is not None:
+        candidates.append(index_dir)
+    for d in candidates:
+        if (d / "index.faiss").is_file():
             # Index files are written by this module only, never downloaded.
             return FAISS.load_local(
-                str(index_dir), embeddings, allow_dangerous_deserialization=True, normalize_L2=True
+                str(d), embeddings, allow_dangerous_deserialization=True, normalize_L2=True
             )
 
     docs = [
