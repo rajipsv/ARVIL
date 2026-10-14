@@ -57,6 +57,15 @@ export interface RootCauseGroup {
   type: string;
   related_lines: RelatedLine[];
   one_line_summary?: string;
+  /** How many times this same normalized error signature occurred before, and where. */
+  prior_occurrences?: {
+    count: number;
+    recent: Array<{
+      github_run_id: number | null;
+      html_url: string | null;
+      created_at: string;
+    }>;
+  };
 }
 
 export interface RagLookup {
@@ -130,6 +139,15 @@ export interface DeepRetrievedPattern {
   sources: string[];
 }
 
+/** A historical error from Neon semantically close to the current one - recurrence evidence, not a verified fix. */
+export interface SimilarFailure {
+  message: string;
+  cosine: number;
+  github_run_id: number | null;
+  html_url: string | null;
+  occurrence_count: number;
+}
+
 export interface DeepTriageResult {
   error_line: number;
   error_message: string;
@@ -142,6 +160,7 @@ export interface DeepTriageResult {
   confidence: number;
   mode: "rag" | "no_match" | "no_rag" | "retrieval_only";
   retrieved: DeepRetrievedPattern[];
+  similar_failures: SimilarFailure[];
   llm_error?: string | null;
 }
 

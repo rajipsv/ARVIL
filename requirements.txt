@@ -7,3 +7,7 @@ langchain-google-genai>=2.0.0
 faiss-cpu>=1.7.4
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+# Live Neon connection for Deep Analyze's "similar past occurrences" (pgvector).
+# Deliberate exception to this file otherwise having no DB dependency - see
+# python/rag/historical.py and the Deep Analyze historical-retrieval design notes.
+psycopg[binary]>=3.1

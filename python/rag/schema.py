@@ -34,6 +34,17 @@ class RetrievedPattern(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
 
+class SimilarFailure(BaseModel):
+    """A historical error from Neon's error_embeddings table, semantically
+    close to the current one. Recurrence evidence only - not a verified fix."""
+
+    message: str
+    cosine: float
+    github_run_id: Optional[int] = None
+    html_url: Optional[str] = None
+    occurrence_count: int = 1
+
+
 class TriageResult(BaseModel):
     """Validated triage for one root cause."""
 
@@ -48,4 +59,5 @@ class TriageResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     mode: Literal["rag", "no_match", "no_rag", "retrieval_only"]
     retrieved: list[RetrievedPattern] = Field(default_factory=list)
+    similar_failures: list[SimilarFailure] = Field(default_factory=list)
     llm_error: Optional[str] = None

@@ -325,6 +325,58 @@ export function ExecutiveMetricsView({
           )}
         </section>
 
+        <section
+          className={
+            printMode
+              ? "rounded-lg border border-gray-200 p-4"
+              : "rounded-lg border border-arvil-border bg-arvil-panel p-4"
+          }
+        >
+          <h2 className="text-sm font-semibold mb-3">Recurring unclassified failures (≥2 runs, no KB match)</h2>
+          {metrics.unclassified_recurring.length === 0 ? (
+            <p className="text-sm text-arvil-muted">No recurring unclassified failures in this window.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className={`text-left text-xs ${printMode ? "text-gray-500" : "text-arvil-muted"}`}>
+                  <th className="pb-2">Example message</th>
+                  <th className="pb-2">Category</th>
+                  <th className="pb-2">Runs</th>
+                  <th className="pb-2">Last run</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metrics.unclassified_recurring.map((u) => (
+                  <tr key={`${u.signature}|${u.category ?? ""}`} className="border-t border-arvil-border/50">
+                    <td
+                      className="py-2 font-mono text-xs text-orange-400 print:text-orange-700 max-w-md truncate"
+                      title={u.example_message}
+                    >
+                      {u.example_message}
+                    </td>
+                    <td className="py-2">{u.category ?? "—"}</td>
+                    <td className="py-2">{u.count}</td>
+                    <td className="py-2">
+                      {u.last_html_url ? (
+                        <a
+                          href={u.last_html_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-arvil-accent hover:underline print:text-orange-700"
+                        >
+                          #{u.last_github_run_id}
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
         <footer
           className={`text-xs pb-8 ${printMode ? "text-gray-500" : "text-arvil-muted"}`}
         >

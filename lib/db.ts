@@ -86,6 +86,20 @@ export async function ensureSchemaV2() {
       message TEXT NOT NULL, recommendation TEXT, kb_pattern_id TEXT
     )
   `;
+  // Canonical KB store: lib/data/patterns.json is a generated export of this
+  // table (see scripts/export-kb.ts), not a hand-edited source anymore.
+  await sql`
+    CREATE TABLE IF NOT EXISTS kb_patterns (
+      id TEXT PRIMARY KEY,
+      pattern TEXT NOT NULL,
+      category TEXT,
+      severity TEXT,
+      signatures JSONB,
+      causes TEXT,
+      solutions TEXT,
+      similar_errors TEXT
+    )
+  `;
 
   const seeds = [
     ["ROCm/TheRock", "Multi-Arch CI"],

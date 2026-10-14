@@ -36,6 +36,12 @@ class Settings:
     cache_dir: Path
     # Read-only FAISS indexes committed with the code (checked before cache_dir).
     index_dir: Path | None = None
+    # Live Neon connection for historical "similar past occurrences" retrieval
+    # (Deep Analyze only). None disables the feature, not an error.
+    database_url: str | None = None
+    # Cosine threshold for historical-failure matches; higher than min_cosine
+    # on purpose - a false "this recurred before" claim is worse than a missed one.
+    history_min_cosine: float = 0.8
 
     @property
     def has_key(self) -> bool:
@@ -56,6 +62,8 @@ def get_settings() -> Settings:
         requests_per_minute=float(os.getenv("ARVIL_LLM_RPM", "10")),
         cache_dir=Path(os.getenv("ARVIL_RAG_CACHE_DIR", "") or _default_cache_dir()),
         index_dir=PYTHON_DIR / "rag" / "index",
+        database_url=os.getenv("DATABASE_URL") or None,
+        history_min_cosine=float(os.getenv("ARVIL_HISTORY_MIN_COSINE", "0.8")),
     )
 
 

@@ -267,6 +267,9 @@ export default function Home() {
       }
       set({ loading: true, error: null, data: null });
       try {
+        // Known only for a synced artifact; absent for a manually pasted log - the
+        // Python side degrades "similar past occurrences" to no run link, not an error.
+        const artifact = syncedLogs.find((a) => a.artifact_id === selectedArtifactId);
         // Python function in this deployment (api/rag.py): FAISS + keyword retrieval, Gemini.
         const res = await fetch("/api/rag", {
           method: "POST",
@@ -276,6 +279,8 @@ export default function Home() {
             line,
             message: rc.primary_message.slice(0, 4000),
             source: (fileName ?? "paste").slice(0, 200),
+            github_run_id: artifact?.github_run_id ?? null,
+            html_url: artifact?.html_url ?? null,
           }),
         });
         const raw = await res.text();
@@ -299,7 +304,7 @@ export default function Home() {
         set({ loading: false, error: err instanceof Error ? err.message : "Deep analyze failed", data: null });
       }
     },
-    [logContent, fileName]
+    [logContent, fileName, syncedLogs, selectedArtifactId]
   );
 
   const downloadJson = () => {
@@ -712,6 +717,11 @@ export default function Home() {
                           +{rc.related_lines.length} related
                         </span>
                       )}
+                      {rc.prior_occurrences && rc.prior_occurrences.count > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-sky-950/60 text-sky-300">
+                          Seen {rc.prior_occurrences.count}x before
+                        </span>
+                      )}
                     </div>
                     {rc.one_line_summary && (
                       <p className="text-sm text-gray-200 mb-2">{rc.one_line_summary}</p>
@@ -722,6 +732,30 @@ export default function Home() {
                     <p className="mt-2 text-green-300/90 text-xs">
                       {rc.recommendation}
                     </p>
+                    {rc.prior_occurrences && rc.prior_occurrences.count > 0 && (
+                      <p className="mt-2 text-xs text-sky-300/90">
+                        Previously:{" "}
+                        {rc.prior_occurrences.recent.map((o, i) => (
+                          <span key={`${o.github_run_id}-${o.created_at}`}>
+                            {i > 0 && ", "}
+                            {o.html_url ? (
+                              <a
+                                href={o.html_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:underline"
+                              >
+                                #{o.github_run_id ?? "?"}
+                              </a>
+                            ) : (
+                              `#${o.github_run_id ?? "?"}`
+                            )}
+                          </span>
+                        ))}
+                        {rc.prior_occurrences.count > rc.prior_occurrences.recent.length &&
+                          ` (+${rc.prior_occurrences.count - rc.prior_occurrences.recent.length} more)`}
+                      </p>
+                    )}
                     {rc.related_lines.length > 0 && (
                       <details className="mt-3">
                         <summary className="text-xs text-arvil-muted cursor-pointer hover:text-white">
@@ -872,6 +906,50 @@ function DeepAnalysisPanel({
                 ))}
               </tbody>
             </table>
+          )}
+          {r.similar_failures.length > 0 && (
+            <div className="pt-1">
+              <p className="text-arvil-muted text-xs mb-1">
+                Similar past occurrences (recurrence evidence, not a verified fix)
+              </p>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-arvil-muted">
+                    <th className="font-normal pb-1">Message</th>
+                    <th className="font-normal pb-1">Cosine</th>
+                    <th className="font-normal pb-1">Seen</th>
+                    <th className="font-normal pb-1">Run</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {r.similar_failures.map((s, i) => (
+                    <tr key={i} className="border-t border-arvil-border/50">
+                      <td className="py-1 font-mono text-gray-300 break-all">
+                        {s.message.slice(0, 160)}
+                      </td>
+                      <td className="py-1">{s.cosine.toFixed(3)}</td>
+                      <td className="py-1 text-arvil-muted">{s.occurrence_count}×</td>
+                      <td className="py-1">
+                        {s.html_url ? (
+                          <a
+                            href={s.html_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-orange-300 underline"
+                          >
+                            #{s.github_run_id ?? "?"}
+                          </a>
+                        ) : s.github_run_id ? (
+                          `#${s.github_run_id}`
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </article>
       ))}
