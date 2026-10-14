@@ -57,6 +57,15 @@ export interface RootCauseGroup {
   type: string;
   related_lines: RelatedLine[];
   one_line_summary?: string;
+  /** How many times this same normalized error signature occurred before, and where. */
+  prior_occurrences?: {
+    count: number;
+    recent: Array<{
+      github_run_id: number | null;
+      html_url: string | null;
+      created_at: string;
+    }>;
+  };
 }
 
 export interface RagLookup {

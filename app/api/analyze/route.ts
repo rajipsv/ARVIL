@@ -1,10 +1,12 @@
 import { stripStaleDeepFields } from "@/lib/analysis-display";
 import { analyzeLog } from "@/lib/analyzer";
 import { getLlmDiag } from "@/lib/llm-config";
+import { attachPriorOccurrences } from "@/lib/occurrence-lookup";
 import { upgradeLegacyAnalysis, isLegacyAnalysis } from "@/lib/upgrade-analysis";
 import {
   getArtifactDetail,
   getArtifactLogText,
+  getDb,
   saveAnalysisV2,
 } from "@/lib/db";
 import type { AnalysisResult, WorkflowPreset } from "@/lib/types";
@@ -121,6 +123,19 @@ export async function POST(req: NextRequest) {
     const result = stripStaleDeepFields(
       analyzeLog(logContent, workflow, sourceLabel)
     );
+
+    // "Seen this before?" - looked up against everything already in Neon,
+    // before this run's own errors are saved below (so the count is prior
+    // occurrences, not including the one happening right now).
+    const sql = getDb();
+    if (sql && result.root_causes.length > 0) {
+      try {
+        await attachPriorOccurrences(sql, result.root_causes);
+      } catch (lookupErr) {
+        console.error("Prior-occurrence lookup failed:", lookupErr);
+      }
+    }
+
     const toSave = result;
     let savedId: string | null = null;
     try {

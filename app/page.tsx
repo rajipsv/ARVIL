@@ -712,6 +712,11 @@ export default function Home() {
                           +{rc.related_lines.length} related
                         </span>
                       )}
+                      {rc.prior_occurrences && rc.prior_occurrences.count > 0 && (
+                        <span className="text-xs px-2 py-0.5 rounded bg-sky-950/60 text-sky-300">
+                          Seen {rc.prior_occurrences.count}x before
+                        </span>
+                      )}
                     </div>
                     {rc.one_line_summary && (
                       <p className="text-sm text-gray-200 mb-2">{rc.one_line_summary}</p>
@@ -722,6 +727,30 @@ export default function Home() {
                     <p className="mt-2 text-green-300/90 text-xs">
                       {rc.recommendation}
                     </p>
+                    {rc.prior_occurrences && rc.prior_occurrences.count > 0 && (
+                      <p className="mt-2 text-xs text-sky-300/90">
+                        Previously:{" "}
+                        {rc.prior_occurrences.recent.map((o, i) => (
+                          <span key={`${o.github_run_id}-${o.created_at}`}>
+                            {i > 0 && ", "}
+                            {o.html_url ? (
+                              <a
+                                href={o.html_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="hover:underline"
+                              >
+                                #{o.github_run_id ?? "?"}
+                              </a>
+                            ) : (
+                              `#${o.github_run_id ?? "?"}`
+                            )}
+                          </span>
+                        ))}
+                        {rc.prior_occurrences.count > rc.prior_occurrences.recent.length &&
+                          ` (+${rc.prior_occurrences.count - rc.prior_occurrences.recent.length} more)`}
+                      </p>
+                    )}
                     {rc.related_lines.length > 0 && (
                       <details className="mt-3">
                         <summary className="text-xs text-arvil-muted cursor-pointer hover:text-white">

@@ -13,7 +13,7 @@ const CALLED_PROCESS = /CalledProcessError/i;
 const RAISE_ONLY = /\braise\s+\w*Error/i;
 const HAS_COMMAND = /Command\s*\[|returned non-zero exit status/i;
 
-function normalizeForDedupe(msg: string): string {
+export function normalizeForDedupe(msg: string): string {
   return msg
     .replace(/[a-f0-9]{40}/gi, "<sha>")
     .replace(/\d{10,}/g, "<n>")
