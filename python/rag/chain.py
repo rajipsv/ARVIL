@@ -240,16 +240,20 @@ def build_chain(
         if not ensure_history_schema(historical_conn, historical_embeddings):
             return []
         vector = embed_normalized(historical_embeddings, x["query"])
-        x["_historical_vector"] = vector  # stash so write-back doesn't re-embed
         return find_similar_failures(
             historical_conn, vector, embed_model, top_k=3, min_cosine=history_min_cosine
         )
 
     def write_back_historical(x: dict) -> dict:
-        vector = x.get("_historical_vector")
-        if historical_conn is not None and vector is not None:
-            from .historical import upsert_embedding
+        # Recomputes the embedding rather than threading it through from find_historical:
+        # RunnablePassthrough.assign does not guarantee an in-place mutation on the input
+        # dict survives into later steps (confirmed by a failed write-back in local testing
+        # with a stashed x["_historical_vector"]). One extra embed call on an already
+        # accepted double-embed path is a small, bounded cost for correctness here.
+        if historical_conn is not None and historical_embeddings is not None:
+            from .historical import embed_normalized, upsert_embedding
 
+            vector = embed_normalized(historical_embeddings, x["query"])
             upsert_embedding(
                 historical_conn,
                 signature=x["query"],
