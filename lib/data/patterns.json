@@ -1,5 +1,15 @@
 [
   {
+    "id": "auth_failure",
+    "pattern": "Authentication / unauthorized access",
+    "category": "Security",
+    "severity": "HIGH",
+    "signatures": ["unauthorized", "authentication failed", "invalid token", "401", "permission denied"],
+    "causes": "Bad credentials, expired token, wrong permissions",
+    "solutions": "Verify credentials, refresh tokens, fix RBAC",
+    "similar_errors": "403 forbidden, access denied"
+  },
+  {
     "id": "db_connection_timeout",
     "pattern": "Database connection timeout",
     "category": "Database",
@@ -8,16 +18,6 @@
     "causes": "Network issues, firewall, DB down, pool exhausted",
     "solutions": "Check connectivity, firewall, restart DB, increase pool size",
     "similar_errors": "Connection refused, Connection reset"
-  },
-  {
-    "id": "oom_heap",
-    "pattern": "Out of memory / Java heap space",
-    "category": "Memory",
-    "severity": "CRITICAL",
-    "signatures": ["out of memory", "heap space", "oom", "memory allocation failed"],
-    "causes": "Memory leak, insufficient heap, large in-memory processing",
-    "solutions": "Increase heap, fix leaks, paginate data, add memory monitoring",
-    "similar_errors": "OutOfMemoryError, MemoryError"
   },
   {
     "id": "disk_quota",
@@ -30,14 +30,54 @@
     "similar_errors": "ENOSPC, write failed"
   },
   {
-    "id": "auth_failure",
-    "pattern": "Authentication / unauthorized access",
-    "category": "Security",
+    "id": "docker_install_test",
+    "pattern": "Containerized ROCm install test failure",
+    "category": "Configuration",
+    "severity": "MEDIUM",
+    "signatures": ["docker", "container", "exit code", "install test", "ubuntu", "rhel", "sles"],
+    "causes": "Image drift, missing privileges, stale cache layer",
+    "solutions": "Rebuild image, verify --device flags, rerun parallel matrix on clean containers",
+    "similar_errors": "OCI runtime error"
+  },
+  {
+    "id": "git_diff_ci_fail",
+    "pattern": "Git diff / checkout failure in CI script",
+    "category": "Configuration",
     "severity": "HIGH",
-    "signatures": ["unauthorized", "authentication failed", "invalid token", "401", "permission denied"],
-    "causes": "Bad credentials, expired token, wrong permissions",
-    "solutions": "Verify credentials, refresh tokens, fix RBAC",
-    "similar_errors": "403 forbidden, access denied"
+    "signatures": ["git diff", "exit status 128", "CalledProcessError", "unknown revision", "bad object", "diff --name-only"],
+    "causes": "Missing commit in shallow checkout, wrong SHA, ref not fetched, or script using invalid revision",
+    "solutions": "Verify checkout fetch-depth, SHA exists on branch, run git fetch --tags, confirm bb1c030b is reachable from HEAD",
+    "similar_errors": "fatal: bad object, ambiguous argument"
+  },
+  {
+    "id": "github_actions_fail",
+    "pattern": "GitHub Actions job failure marker",
+    "category": "Other",
+    "severity": "MEDIUM",
+    "signatures": ["##[error]", "process completed with exit code"],
+    "causes": "Upstream step failed, timeout, runner issue",
+    "solutions": "Inspect the primary failure above this line — this is usually a job wrapper, not a new root cause",
+    "similar_errors": "Job cancelled"
+  },
+  {
+    "id": "oom_heap",
+    "pattern": "Out of memory / Java heap space",
+    "category": "Memory",
+    "severity": "CRITICAL",
+    "signatures": ["out of memory", "heap space", "oom", "memory allocation failed"],
+    "causes": "Memory leak, insufficient heap, large in-memory processing",
+    "solutions": "Increase heap, fix leaks, paginate data, add memory monitoring",
+    "similar_errors": "OutOfMemoryError, MemoryError"
+  },
+  {
+    "id": "pytorch_cuda_rocm",
+    "pattern": "PyTorch / training framework device error on ROCm",
+    "category": "Runtime",
+    "severity": "HIGH",
+    "signatures": ["pytorch", "cuda", "hip", "device not found", "runtimeerror", "cudnn", "miopen", "gfx94"],
+    "causes": "Framework build mismatch, wrong torch-rocm wheel, OOM on GPU",
+    "solutions": "Match torch+ROCm versions, reduce batch size, rocm-smi memory check",
+    "similar_errors": "HIP out of memory"
   },
   {
     "id": "rate_limit",
@@ -90,26 +130,6 @@
     "similar_errors": "Connection closed by peer during collective"
   },
   {
-    "id": "pytorch_cuda_rocm",
-    "pattern": "PyTorch / training framework device error on ROCm",
-    "category": "Runtime",
-    "severity": "HIGH",
-    "signatures": ["pytorch", "cuda", "hip", "device not found", "runtimeerror", "cudnn", "miopen", "gfx94"],
-    "causes": "Framework build mismatch, wrong torch-rocm wheel, OOM on GPU",
-    "solutions": "Match torch+ROCm versions, reduce batch size, rocm-smi memory check",
-    "similar_errors": "HIP out of memory"
-  },
-  {
-    "id": "docker_install_test",
-    "pattern": "Containerized ROCm install test failure",
-    "category": "Configuration",
-    "severity": "MEDIUM",
-    "signatures": ["docker", "container", "exit code", "install test", "ubuntu", "rhel", "sles"],
-    "causes": "Image drift, missing privileges, stale cache layer",
-    "solutions": "Rebuild image, verify --device flags, rerun parallel matrix on clean containers",
-    "similar_errors": "OCI runtime error"
-  },
-  {
     "id": "therock_cmake_fail",
     "pattern": "TheRock CMake / Ninja build failure",
     "category": "Configuration",
@@ -128,25 +148,5 @@
     "causes": "Regression, flaky test, env/GPU not available in runner",
     "solutions": "Re-run shard, check GPU runner label, bisect commit",
     "similar_errors": "Test timeout"
-  },
-  {
-    "id": "git_diff_ci_fail",
-    "pattern": "Git diff / checkout failure in CI script",
-    "category": "Configuration",
-    "severity": "HIGH",
-    "signatures": ["git diff", "exit status 128", "CalledProcessError", "unknown revision", "bad object", "diff --name-only"],
-    "causes": "Missing commit in shallow checkout, wrong SHA, ref not fetched, or script using invalid revision",
-    "solutions": "Verify checkout fetch-depth, SHA exists on branch, run git fetch --tags, confirm bb1c030b is reachable from HEAD",
-    "similar_errors": "fatal: bad object, ambiguous argument"
-  },
-  {
-    "id": "github_actions_fail",
-    "pattern": "GitHub Actions job failure marker",
-    "category": "Other",
-    "severity": "MEDIUM",
-    "signatures": ["##[error]", "process completed with exit code"],
-    "causes": "Upstream step failed, timeout, runner issue",
-    "solutions": "Inspect the primary failure above this line — this is usually a job wrapper, not a new root cause",
-    "similar_errors": "Job cancelled"
   }
 ]

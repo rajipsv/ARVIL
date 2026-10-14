@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:root-cause": "npx tsx scripts/test-root-cause.ts"
+    "test:root-cause": "npx tsx scripts/test-root-cause.ts",
+    "kb:migrate": "npx tsx scripts/migrate-kb-to-neon.ts",
+    "kb:export": "npx tsx scripts/export-kb.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.0",
