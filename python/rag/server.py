@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field
 
 from .chain import GenerateFn, make_generate_fn
 from .config import Settings, get_settings
+from .historical import get_connection
+from .index import make_embeddings
 from .knowledge import load_patterns
 from .pipeline import analyze_log, build_retriever
 from .retriever import HybridRetriever
@@ -36,6 +38,11 @@ class TriageRequest(BaseModel):
     max_causes: int = Field(default=1, ge=1, le=5)
     use_llm: bool = True
     source: str = Field(default="web", max_length=200)
+    # Best-effort: only known when the log came from a synced artifact with run
+    # metadata. Used to link "similar past occurrences" back to a real run; absent
+    # for manually pasted logs, which is fine - degrades to no link, not an error.
+    github_run_id: Optional[int] = None
+    html_url: Optional[str] = Field(default=None, max_length=500)
 
 
 class TriageResponse(BaseModel):
@@ -56,10 +63,14 @@ class Engine:
         settings: Settings,
         retriever: HybridRetriever,
         generate: GenerateFn | None,
+        historical_conn: object | None = None,
+        historical_embeddings: object | None = None,
     ):
         self.settings = settings
         self.retriever = retriever
         self.generate = generate
+        self.historical_conn = historical_conn
+        self.historical_embeddings = historical_embeddings
 
 
 @lru_cache(maxsize=1)
@@ -69,7 +80,11 @@ def get_engine() -> Engine:
     mode = os.getenv("ARVIL_RAG_RETRIEVER") or ("hybrid" if settings.has_key else "keyword")
     retriever = build_retriever(settings, mode)
     generate = make_generate_fn(settings, interactive=True) if settings.has_key else None
-    return Engine(settings, retriever, generate)
+    # Live Neon connection for "similar past occurrences" (Deep Analyze only). Both
+    # None when DATABASE_URL/API key are unset - feature disables itself, not an error.
+    historical_conn = get_connection(settings) if settings.has_key else None
+    historical_embeddings = make_embeddings(settings) if historical_conn is not None else None
+    return Engine(settings, retriever, generate, historical_conn, historical_embeddings)
 
 
 def check_auth(
@@ -133,6 +148,10 @@ def triage(req: TriageRequest, engine: Engine = Depends(get_engine)) -> TriageRe
             max_concurrency=req.max_causes,
             line=req.line,
             message=req.message,
+            historical_conn=engine.historical_conn,
+            historical_embeddings=engine.historical_embeddings,
+            github_run_id=req.github_run_id,
+            html_url=req.html_url,
         )
         failed = [r for r in results if r.llm_error]
         if use_llm and failed:
@@ -153,6 +172,10 @@ def triage(req: TriageRequest, engine: Engine = Depends(get_engine)) -> TriageRe
             retriever=engine.retriever,
             line=req.line,
             message=req.message,
+            historical_conn=engine.historical_conn,
+            historical_embeddings=engine.historical_embeddings,
+            github_run_id=req.github_run_id,
+            html_url=req.html_url,
         )
     return TriageResponse(
         results=results,

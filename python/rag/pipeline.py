@@ -90,6 +90,10 @@ def analyze_log(
     max_concurrency: int = 1,
     line: int | None = None,
     message: str | None = None,
+    historical_conn: Any = None,
+    historical_embeddings: Any = None,
+    github_run_id: int | None = None,
+    html_url: str | None = None,
 ) -> list[TriageResult]:
     """
     Triage the log's root causes (up to max_causes), or only the error at `line`
@@ -106,6 +110,12 @@ def analyze_log(
         use_rag=use_rag,
         top_k=top_k,
         llm_fallback=llm_fallback,
+        historical_conn=historical_conn,
+        historical_embeddings=historical_embeddings,
+        embed_model=settings.embed_model,
+        history_min_cosine=settings.history_min_cosine,
+        github_run_id=github_run_id,
+        html_url=html_url,
     )
 
     if line is not None:
