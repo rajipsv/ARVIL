@@ -39,9 +39,7 @@ export default function Home() {
   const [analysisUpgraded, setAnalysisUpgraded] = useState(false);
   const [uniqueRunCount, setUniqueRunCount] = useState<number | null>(null);
   const [period, setPeriod] = useState<PeriodKey>("7d");
-  const [deep, setDeep] = useState<DeepTriageResponse | null>(null);
-  const [deepLoading, setDeepLoading] = useState(false);
-  const [deepError, setDeepError] = useState<string | null>(null);
+  const [deepByLine, setDeepByLine] = useState<Record<number, DeepState>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   const listUniqueRuns = useMemo(() => {
@@ -255,41 +253,54 @@ export default function Home() {
 
   // A new rule-based result invalidates any deep analysis shown for the previous one.
   useEffect(() => {
-    setDeep(null);
-    setDeepError(null);
+    setDeepByLine({});
   }, [result]);
 
-  const runDeepAnalyze = useCallback(async () => {
-    // Synced logs are loaded into logContent when selected, so both paths send text.
-    if (!logContent.trim()) {
-      setDeepError("No log text loaded. Select a synced log or paste one first.");
-      return;
-    }
-    setDeepLoading(true);
-    setDeepError(null);
-    try {
-      // Python function in this deployment (api/rag.py): FAISS + keyword retrieval, Gemini.
-      const res = await fetch("/api/rag", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          log: logContent.slice(0, 2_000_000),
-          max_causes: 3,
-          source: (fileName ?? "paste").slice(0, 200),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
-        throw new Error(`Deep analyze failed (HTTP ${res.status}): ${detail}`);
+  /** Deep analyze ONE root cause: one FAISS retrieval and at most one Gemini call. */
+  const runDeepAnalyze = useCallback(
+    async (rc: RootCauseGroup) => {
+      const line = rc.primary_line;
+      const set = (state: DeepState) => setDeepByLine((m) => ({ ...m, [line]: state }));
+      if (!logContent.trim()) {
+        set({ loading: false, error: "No log text loaded. Select a synced log or paste one first.", data: null });
+        return;
       }
-      setDeep(data as DeepTriageResponse);
-    } catch (err) {
-      setDeepError(err instanceof Error ? err.message : "Deep analyze failed");
-    } finally {
-      setDeepLoading(false);
-    }
-  }, [logContent, fileName]);
+      set({ loading: true, error: null, data: null });
+      try {
+        // Python function in this deployment (api/rag.py): FAISS + keyword retrieval, Gemini.
+        const res = await fetch("/api/rag", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            log: logContent.slice(0, 2_000_000),
+            line,
+            message: rc.primary_message.slice(0, 4000),
+            source: (fileName ?? "paste").slice(0, 200),
+          }),
+        });
+        const raw = await res.text();
+        let data: Record<string, unknown> = {};
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          // Platform errors (e.g. a 504 timeout page) are not JSON.
+        }
+        if (!res.ok) {
+          const detail =
+            typeof data.detail === "string"
+              ? data.detail
+              : res.status === 504
+                ? "the function timed out. Try again; the first call after a while is slower."
+                : raw.slice(0, 200) || res.statusText;
+          throw new Error(`Deep analyze failed (HTTP ${res.status}): ${detail}`);
+        }
+        set({ loading: false, error: null, data: data as unknown as DeepTriageResponse });
+      } catch (err) {
+        set({ loading: false, error: err instanceof Error ? err.message : "Deep analyze failed", data: null });
+      }
+    },
+    [logContent, fileName]
+  );
 
   const downloadJson = () => {
     if (!result) return;
@@ -624,24 +635,13 @@ export default function Home() {
               <div className="rounded-lg border border-arvil-border bg-arvil-panel p-4">
                 <div className="flex justify-between items-start gap-2">
                   <h2 className="font-semibold text-lg">Summary</h2>
-                  <div className="flex flex-wrap gap-2 justify-end">
-                    <button
-                      type="button"
-                      onClick={runDeepAnalyze}
-                      disabled={deepLoading}
-                      title="FAISS + keyword retrieval over the knowledge base, explained by Gemini"
-                      className="text-xs px-2 py-1 rounded border border-arvil-accent text-orange-200 hover:bg-orange-950/40 disabled:opacity-50"
-                    >
-                      {deepLoading ? "Deep analyzing…" : "Deep analyze (FAISS)"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={downloadJson}
-                      className="text-xs px-2 py-1 rounded border border-arvil-border hover:border-arvil-accent"
-                    >
-                      Download JSON
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={downloadJson}
+                    className="text-xs px-2 py-1 rounded border border-arvil-border hover:border-arvil-accent"
+                  >
+                    Download JSON
+                  </button>
                 </div>
                 <p className="text-sm mt-2 text-gray-300">{result.summary}</p>
                 {analysisUpgraded && (
@@ -743,13 +743,31 @@ export default function Home() {
                         </ul>
                       </details>
                     )}
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={() => runDeepAnalyze(rc)}
+                        disabled={deepByLine[rc.primary_line]?.loading}
+                        title="FAISS + keyword retrieval over the knowledge base for this error, explained by Gemini"
+                        className="text-xs px-2 py-1 rounded border border-arvil-accent text-orange-200 hover:bg-orange-950/40 disabled:opacity-50"
+                      >
+                        {deepByLine[rc.primary_line]?.loading
+                          ? "Deep analyzing…"
+                          : deepByLine[rc.primary_line]?.data
+                            ? "Deep analyze again"
+                            : "Deep analyze this error (FAISS)"}
+                      </button>
+                      {deepByLine[rc.primary_line] && (
+                        <DeepAnalysisPanel
+                          deep={deepByLine[rc.primary_line].data}
+                          loading={deepByLine[rc.primary_line].loading}
+                          error={deepByLine[rc.primary_line].error}
+                        />
+                      )}
+                    </div>
                   </article>
                 ))}
               </div>
-
-              {(deepLoading || deepError || deep) && (
-                <DeepAnalysisPanel deep={deep} loading={deepLoading} error={deepError} />
-              )}
 
               {result.rag_lookups.length > 0 && (
                 <details className="rounded-lg border border-arvil-border bg-arvil-panel p-4">
@@ -774,6 +792,12 @@ export default function Home() {
   );
 }
 
+interface DeepState {
+  loading: boolean;
+  error: string | null;
+  data: DeepTriageResponse | null;
+}
+
 function DeepAnalysisPanel({
   deep,
   loading,
@@ -784,9 +808,9 @@ function DeepAnalysisPanel({
   error: string | null;
 }) {
   return (
-    <div className="rounded-lg border border-orange-900/60 bg-arvil-panel p-4 space-y-3">
+    <div className="mt-3 rounded-lg border border-orange-900/60 bg-arvil-bg/60 p-3 space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold">Deep analyze — FAISS retrieval</h2>
+        <h3 className="text-sm font-semibold">Deep analyze — FAISS retrieval</h3>
         {deep && (
           <span className="text-xs text-arvil-muted">
             {deep.retriever} retrieval · {deep.embed_model}
@@ -797,7 +821,7 @@ function DeepAnalysisPanel({
       </div>
       {loading && (
         <p className="text-sm text-arvil-muted animate-pulse">
-          Running FAISS retrieval… the first call after a while takes longer (cold start).
+          Running FAISS retrieval for this error… the first call after a while is slower (cold start).
         </p>
       )}
       {error && <p className="text-sm text-red-400">{error}</p>}
@@ -807,7 +831,7 @@ function DeepAnalysisPanel({
         </p>
       )}
       {deep && deep.results.length === 0 && (
-        <p className="text-sm text-arvil-muted">No root causes found in this log.</p>
+        <p className="text-sm text-arvil-muted">No result for this error.</p>
       )}
       {deep?.results.map((r) => (
         <article key={r.error_line} className="rounded border border-arvil-border p-3 text-sm space-y-2">

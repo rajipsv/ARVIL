@@ -30,7 +30,10 @@ MAX_LOG_CHARS = 2_000_000
 
 class TriageRequest(BaseModel):
     log: str = Field(min_length=1, max_length=MAX_LOG_CHARS)
-    max_causes: int = Field(default=3, ge=1, le=5)
+    # Triage only the error at this 1-based line (one LLM call); omit for the whole log.
+    line: Optional[int] = Field(default=None, ge=1)
+    message: Optional[str] = Field(default=None, max_length=4000)
+    max_causes: int = Field(default=1, ge=1, le=5)
     use_llm: bool = True
     source: str = Field(default="web", max_length=200)
 
@@ -65,7 +68,7 @@ def get_engine() -> Engine:
     # Query embeddings need the API key; without it, degrade to keyword retrieval.
     mode = os.getenv("ARVIL_RAG_RETRIEVER") or ("hybrid" if settings.has_key else "keyword")
     retriever = build_retriever(settings, mode)
-    generate = make_generate_fn(settings) if settings.has_key else None
+    generate = make_generate_fn(settings, interactive=True) if settings.has_key else None
     return Engine(settings, retriever, generate)
 
 
@@ -126,7 +129,15 @@ def triage(req: TriageRequest, engine: Engine = Depends(get_engine)) -> TriageRe
             max_causes=req.max_causes,
             retriever=engine.retriever,
             generate=engine.generate,
+            llm_fallback=True,
+            max_concurrency=req.max_causes,
+            line=req.line,
+            message=req.message,
         )
+        failed = [r for r in results if r.llm_error]
+        if use_llm and failed:
+            llm_error = failed[0].llm_error
+            use_llm = any(r.mode == "rag" for r in results)
     except Exception as e:
         if not use_llm:
             raise HTTPException(status_code=500, detail=f"Retrieval failed: {e}") from e
@@ -140,6 +151,8 @@ def triage(req: TriageRequest, engine: Engine = Depends(get_engine)) -> TriageRe
             use_llm=False,
             max_causes=req.max_causes,
             retriever=engine.retriever,
+            line=req.line,
+            message=req.message,
         )
     return TriageResponse(
         results=results,

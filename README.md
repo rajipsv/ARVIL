@@ -77,7 +77,7 @@ Run [scripts/schema_v2.sql](scripts/schema_v2.sql) in Neon SQL Editor, or let th
 
 **Analyze / Re-analyze** is rule-based (keyword knowledge-base match, no LLM) and is what sync uses.
 
-**Deep analyze (FAISS)** is on demand: the console calls `POST /api/rag`, a Vercel **Python** function ([api/rag.py](api/rag.py)) in the same deployment. It runs the `python/rag` pipeline: FAISS + keyword retrieval over the knowledge base, then a Gemini explanation. If Gemini fails or is rate-limited it returns retrieval-only answers. `GET /api/rag` reports health.
+**Deep analyze (FAISS)** is on demand and runs on **one root cause at a time** (a button on each card, so one Gemini call per click): the console calls `POST /api/rag` with the log and that error's line, a Vercel **Python** function ([api/rag.py](api/rag.py)) in the same deployment. It runs the `python/rag` pipeline: FAISS + keyword retrieval over the knowledge base, then a Gemini explanation. If Gemini fails or is rate-limited it returns retrieval-only answers. `GET /api/rag` reports health.
 
 - The FAISS index ships prebuilt in `python/rag/index/`, so cold starts don't re-embed the patterns. After editing `lib/data/patterns.json`, run `python -m rag --export-index` (from `python/`) and commit the result.
 - Set `GOOGLE_API_KEY` in Vercel (Production and Preview); it embeds each query and generates explanations.

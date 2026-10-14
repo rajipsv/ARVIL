@@ -48,3 +48,4 @@ class TriageResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     mode: Literal["rag", "no_match", "no_rag", "retrieval_only"]
     retrieved: list[RetrievedPattern] = Field(default_factory=list)
+    llm_error: Optional[str] = None

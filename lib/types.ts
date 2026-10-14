@@ -142,6 +142,7 @@ export interface DeepTriageResult {
   confidence: number;
   mode: "rag" | "no_match" | "no_rag" | "retrieval_only";
   retrieved: DeepRetrievedPattern[];
+  llm_error?: string | null;
 }
 
 export interface DeepTriageResponse {

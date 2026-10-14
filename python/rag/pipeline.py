@@ -35,6 +35,28 @@ def build_retriever(
     return HybridRetriever(patterns, store=store, mode=mode, min_cosine=settings.min_cosine)
 
 
+def _single_error_input(content: str, line: int, message: str | None) -> dict[str, Any]:
+    """Input for one error chosen in the UI; `message` relocates it if line numbers drifted."""
+    lines = content.splitlines()
+    text = lines[line - 1].strip() if 1 <= line <= len(lines) else ""
+    if message and message.strip() and message.strip() != text:
+        for i, ln in enumerate(lines):
+            if ln.strip() == message.strip():
+                line, text = i + 1, ln.strip()
+                break
+        else:
+            text = message.strip()
+    upper = text.upper()
+    kind = "FATAL" if "FATAL" in upper else "CRITICAL" if "CRITICAL" in upper else "ERROR"
+    return {
+        "error_line": line,
+        "error_message": text,
+        "error_type": kind,
+        "context": context_window(content, line) if 1 <= line <= len(lines) else text,
+        "evidence_lines": [line],
+    }
+
+
 def _log_record(x: dict[str, Any], source: str) -> dict[str, Any]:
     """Raw error, transformed query, retrieved ids with scores, final prompt, output."""
     return {
@@ -64,17 +86,32 @@ def analyze_log(
     run_log: Path | None = None,
     retriever: HybridRetriever | None = None,
     generate: GenerateFn | None = None,
+    llm_fallback: bool = False,
+    max_concurrency: int = 1,
+    line: int | None = None,
+    message: str | None = None,
 ) -> list[TriageResult]:
+    """
+    Triage the log's root causes (up to max_causes), or only the error at `line`
+    when it is given: one retrieval and at most one LLM call.
+    """
     settings = settings or get_settings()
     if use_rag and retriever is None:
         retriever = build_retriever(settings, retriever_mode)
     if use_llm and generate is None:
         generate = make_generate_fn(settings)
-    chain = build_chain(retriever if use_rag else None, generate if use_llm else None, use_rag=use_rag, top_k=top_k)
+    chain = build_chain(
+        retriever if use_rag else None,
+        generate if use_llm else None,
+        use_rag=use_rag,
+        top_k=top_k,
+        llm_fallback=llm_fallback,
+    )
 
-    results: list[TriageResult] = []
-    for rc in extract_root_causes(content)[:max_causes]:
-        out = chain.invoke(
+    if line is not None:
+        inputs = [_single_error_input(content, line, message)]
+    else:
+        inputs = [
             {
                 "error_line": rc.line,
                 "error_message": rc.message,
@@ -82,7 +119,13 @@ def analyze_log(
                 "context": context_window(content, rc.line),
                 "evidence_lines": rc.evidence_lines,
             }
-        )
+            for rc in extract_root_causes(content)[:max_causes]
+        ]
+    # Root causes are independent; max_concurrency > 1 runs their LLM calls in parallel.
+    outputs = chain.batch(inputs, config={"max_concurrency": max_concurrency}) if inputs else []
+
+    results: list[TriageResult] = []
+    for out in outputs:
         results.append(out["result"])
         if run_log is not None:
             run_log.parent.mkdir(parents=True, exist_ok=True)

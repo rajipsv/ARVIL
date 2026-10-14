@@ -127,3 +127,42 @@ def test_committed_index_matches_shared_patterns():
     assert (s.index_dir / key / "index.faiss").is_file(), (
         "Run `python -m rag --export-index` after changing lib/data/patterns.json"
     )
+
+
+def test_single_error_by_line(client):
+    c, holder, tmp_path = client
+    calls = []
+
+    def generate(messages):
+        calls.append(messages)
+        return LLMTriage(
+            pattern_id="git_diff_ci_fail",
+            category="Configuration",
+            severity="HIGH",
+            root_cause="shallow clone",
+            recommendation="fetch-depth: 0",
+            confidence=0.8,
+        )
+
+    holder["engine"] = _engine(tmp_path, generate)
+    body = c.post("/triage", json={"log": GIT_DIFF_LOG, "line": 153}).json()
+    assert len(body["results"]) == 1 and len(calls) == 1  # one error, one LLM call
+    assert body["results"][0]["error_line"] == 153
+    assert "git" in body["results"][0]["error_message"]
+
+
+def test_single_error_relocated_by_message(client):
+    c, _, _ = client
+    msg = GIT_DIFF_LOG.splitlines()[152].strip()
+    body = c.post("/triage", json={"log": GIT_DIFF_LOG, "line": 5, "message": msg}).json()
+    assert body["results"][0]["error_line"] == 153  # wrong line number corrected by text
+
+
+def test_default_is_one_root_cause(client):
+    c, _, _ = client
+    # Both errors sit inside the failure window (100 lines before the last failure marker).
+    lines = GIT_DIFF_LOG.splitlines()
+    lines[100] = "2026-05-21T14:30:00Z FATAL out of memory heap space"
+    two = "\n".join(lines)
+    assert len(c.post("/triage", json={"log": two}).json()["results"]) == 1
+    assert len(c.post("/triage", json={"log": two, "max_causes": 3}).json()["results"]) == 2
