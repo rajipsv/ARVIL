@@ -45,6 +45,7 @@ interface GhRun {
   run_started_at?: string;
   html_url?: string;
   workflow_id?: number;
+  path?: string;
 }
 
 interface GhJob {
@@ -68,7 +69,10 @@ async function workflowIdsForPreset(
   preset: WorkflowPreset
 ): Promise<Set<number>> {
   const ids = new Set<number>();
-  const res = await ghFetch(`/repos/${owner}/${repo}/actions/workflows`, token);
+  const res = await ghFetch(
+    `/repos/${owner}/${repo}/actions/workflows?per_page=100`,
+    token
+  );
   if (!res.ok) return ids;
 
   const data = (await res.json()) as { workflows?: GhWorkflow[] };
@@ -82,16 +86,25 @@ async function workflowIdsForPreset(
   return ids;
 }
 
+function runPresetOf(run: GhRun): WorkflowPreset {
+  return workflowNameToPreset(run.name ?? "", run.path);
+}
+
+/**
+ * With a category selected, keep only that category's runs. Without one
+ * (scheduled sync), keep runs from any TheRock category and skip unrelated
+ * workflows such as PR bots and pre-commit, which no screen lists.
+ */
 function runMatchesPreset(
   run: GhRun,
   preset: WorkflowPreset | undefined,
   workflowIds: Set<number>
 ): boolean {
-  if (!preset || preset === "custom") return true;
+  if (!preset || preset === "custom") return runPresetOf(run) !== "custom";
   if (run.workflow_id && workflowIds.size > 0 && workflowIds.has(run.workflow_id)) {
     return true;
   }
-  return presetMatchesWorkflowName(preset, run.name ?? "");
+  return presetMatchesWorkflowName(preset, run.name ?? "", run.path);
 }
 
 /** Accept `ROCm/TheRock` or `https://github.com/ROCm/TheRock` (common misconfiguration). */
@@ -224,7 +237,7 @@ export async function pollTheRock(options?: {
 
   const { owner, name } = repoParts(githubRepo);
   const filtering = preset && preset !== "custom";
-  const perPage = options?.perPage ?? (filtering ? 50 : 20);
+  const perPage = options?.perPage ?? (filtering ? 100 : 50);
   const maxRuns = options?.maxRuns ?? MAX_NEW_RUNS_PER_SYNC;
 
   const workflowIds =
@@ -259,12 +272,17 @@ export async function pollTheRock(options?: {
   let ingested = 0;
 
   for (const run of runs) {
-    if (ingested >= maxRuns) break;
+    if (!runMatchesPreset(run, preset, workflowIds)) {
+      result.runs_skipped_filter++;
+      continue;
+    }
+    result.runs_matched++;
+    if (ingested >= maxRuns) continue;
     if (knownSet.has(run.id)) continue;
 
     try {
       const workflowName = run.name || "unknown";
-      const runPreset = workflowNameToPreset(workflowName);
+      const runPreset = runPresetOf(run);
       const runId = await upsertCiRun({
         github_repo: githubRepo,
         workflow_name: workflowName,
@@ -279,8 +297,9 @@ export async function pollTheRock(options?: {
         html_url: run.html_url,
       });
 
+      // Multi-Arch runs have many jobs; the default page of 30 can miss the failed one.
       const jobsRes = await ghFetch(
-        `/repos/${owner}/${name}/actions/runs/${run.id}/jobs`,
+        `/repos/${owner}/${name}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`,
         token
       );
       if (!jobsRes.ok) {
@@ -290,15 +309,16 @@ export async function pollTheRock(options?: {
       }
 
       const jobsData = (await jobsRes.json()) as { jobs?: GhJob[] };
-      const failedJobs = (jobsData.jobs ?? []).filter(
-        (j) => j.conclusion === "failure" || j.conclusion === "cancelled"
-      );
+      const allJobs = jobsData.jobs ?? [];
+      // Prefer real failures; a cancelled job is usually a side effect of one.
+      const failedJobs = [
+        ...allJobs.filter((j) => j.conclusion === "failure"),
+        ...allJobs.filter((j) => j.conclusion === "cancelled"),
+      ];
       const jobsToProcess = failedJobs.slice(0, MAX_JOBS_PER_RUN);
       if (jobsToProcess.length === 0 && (jobsData.jobs ?? []).length > 0) {
         jobsToProcess.push((jobsData.jobs ?? [])[0]);
       }
-
-      const preset = workflowNameToPreset(workflowName);
 
       for (const job of jobsToProcess) {
         try {
@@ -331,7 +351,7 @@ export async function pollTheRock(options?: {
           if (artifactId) {
             result.artifacts_created++;
             await chunkLogContent(artifactId, logText);
-            const analysis = analyzeLog(logText, preset, `poll-run-${run.id}-job-${job.id}`);
+            const analysis = analyzeLog(logText, runPreset, `poll-run-${run.id}-job-${job.id}`);
             const analysisId = await saveAnalysisV2(analysis, logText, artifactId);
             if (analysisId) result.analyses_created++;
           }
@@ -351,7 +371,7 @@ export async function pollTheRock(options?: {
 
   if (filtering && result.runs_matched === 0 && result.runs_checked > 0) {
     result.errors.push(
-      `No failed runs matched preset "${preset}" in the last ${result.runs_checked} failures — try "All workflows" or another category.`
+      `No failed runs matched preset "${preset}" in the last ${result.runs_checked} failures — try another category.`
     );
   }
 
