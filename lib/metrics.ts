@@ -39,6 +39,16 @@ export interface ExecutiveMetrics {
     last_html_url: string | null;
     last_github_run_id: number | null;
   }>;
+  /** Errors with no KB match that keep recurring — candidates for a new KB pattern. */
+  unclassified_recurring: Array<{
+    signature: string;
+    example_message: string;
+    category: string | null;
+    severity: string | null;
+    count: number;
+    last_html_url: string | null;
+    last_github_run_id: number | null;
+  }>;
   daily_trend: Array<{ date: string; count: number }>;
   executive_summary: string[];
   last_sync_at: string | null;
@@ -101,6 +111,28 @@ export function getDemoExecutiveMetrics(periodDays: number): ExecutiveMetrics {
         last_github_run_id: 26242953143,
       },
     ],
+    unclassified_recurring: [
+      {
+        signature: "error: hip runtime failed to allocate device memory on gfx942 <n>",
+        example_message:
+          "error: hip runtime failed to allocate device memory on gfx942: requested 17179869184 bytes, available 8589934592 bytes",
+        category: "Memory",
+        severity: "CRITICAL",
+        count: 3,
+        last_html_url: "https://github.com/ROCm/TheRock/actions",
+        last_github_run_id: 26244871205,
+      },
+      {
+        signature: "FAILED test_matmul_bf16[gfx942-<n>] assertion mismatch tol=<n>",
+        example_message:
+          "FAILED test_matmul_bf16[gfx942-8192] - AssertionError: Tensors not close: max diff 0.0042 > tol 1e-3",
+        category: "Runtime",
+        severity: "HIGH",
+        count: 2,
+        last_html_url: "https://github.com/ROCm/TheRock/actions",
+        last_github_run_id: 26244871312,
+      },
+    ],
     daily_trend: Array.from({ length: 14 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() - (13 - i));
@@ -120,7 +152,7 @@ export function getDemoExecutiveMetrics(periodDays: number): ExecutiveMetrics {
 
 function buildExecutiveSummary(m: Omit<ExecutiveMetrics, "executive_summary">): string[] {
   const bullets: string[] = [];
-  const { kpis, workflow_breakdown, top_categories, repeat_issues } = m;
+  const { kpis, workflow_breakdown, top_categories, repeat_issues, unclassified_recurring } = m;
 
   if (kpis.failures_qualified === 0) {
     return [
@@ -155,6 +187,12 @@ function buildExecutiveSummary(m: Omit<ExecutiveMetrics, "executive_summary">): 
   if (repeat_issues.length > 0) {
     bullets.push(
       `${repeat_issues.length} recurring ROCm signature(s) detected (≥2 runs) — candidate flake/regression reviews.`
+    );
+  }
+
+  if (unclassified_recurring.length > 0) {
+    bullets.push(
+      `${unclassified_recurring.length} unclassified failure signature(s) recurred without a KB match in this window.`
     );
   }
 
@@ -320,6 +358,71 @@ export async function getExecutiveMetrics(
     last_github_run_id: Number(r.last_github_run_id),
   }));
 
+  // Errors with no KB match that keep recurring — candidates for a new KB pattern.
+  // Grouped by (normalized signature, category): grouping on category too avoids
+  // merging two unrelated root causes that happen to normalize to similar short text.
+  const unclassifiedRows = (await sql`
+    WITH latest_la AS (
+      SELECT DISTINCT ON (la.artifact_id) la.id, la.artifact_id, la.created_at
+      FROM log_analyses la
+      WHERE la.created_at >= ${repeatSince}::timestamptz
+        AND la.artifact_id IS NOT NULL
+      ORDER BY la.artifact_id, la.created_at DESC
+    ),
+    unmatched AS (
+      SELECT
+        left(
+          regexp_replace(
+            regexp_replace(ae.message, '[a-f0-9]{40}', '<sha>', 'gi'),
+            '\\d{10,}', '<n>', 'g'
+          ),
+          200
+        ) AS signature,
+        ae.category,
+        ae.severity,
+        left(ae.message, 300) AS example_message,
+        r.github_run_id,
+        r.html_url,
+        latest_la.created_at
+      FROM analysis_errors ae
+      JOIN latest_la ON latest_la.id = ae.analysis_id
+      JOIN log_artifacts a ON a.id = latest_la.artifact_id
+      JOIN ci_runs r ON r.id = a.run_id
+      WHERE ae.kb_pattern_id IS NULL
+    )
+    SELECT
+      signature,
+      category,
+      COUNT(DISTINCT github_run_id)::int AS count,
+      (array_agg(example_message ORDER BY created_at DESC))[1] AS example_message,
+      (array_agg(severity ORDER BY created_at DESC))[1] AS severity,
+      MAX(html_url) AS last_html_url,
+      MAX(github_run_id) AS last_github_run_id
+    FROM unmatched
+    GROUP BY signature, category
+    HAVING COUNT(DISTINCT github_run_id) >= 2
+    ORDER BY count DESC
+    LIMIT 10
+  `) as Array<{
+    signature: string;
+    category: string | null;
+    count: number;
+    example_message: string;
+    severity: string | null;
+    last_html_url: string | null;
+    last_github_run_id: string;
+  }>;
+
+  const unclassified_recurring = unclassifiedRows.map((r) => ({
+    signature: r.signature,
+    example_message: r.example_message,
+    category: r.category,
+    severity: r.severity,
+    count: r.count,
+    last_html_url: r.last_html_url,
+    last_github_run_id: r.last_github_run_id != null ? Number(r.last_github_run_id) : null,
+  }));
+
   const trendRows = (await sql`
     WITH latest_la AS (
       SELECT DISTINCT ON (la.artifact_id)
@@ -390,6 +493,7 @@ export async function getExecutiveMetrics(
     workflow_breakdown,
     top_categories,
     repeat_issues,
+    unclassified_recurring,
     daily_trend,
     last_sync_at: syncRows[0]?.last_sync ?? null,
   };
